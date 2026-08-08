@@ -1,0 +1,121 @@
+{
+  "name": "BD1",
+  "description": "Synthetic fixture exercising merge inference, evidence questions and multi-premise derivation. Entity names are placeholder labels only; the Core assigns them no meaning.",
+  "goalLabel": "slot BD1:1 is blocked for request PJ5860",
+  "goalPayload": { "slot": "BD1:1", "request": "PJ5860" },
+  "vertices": [
+    {
+      "key": "ev_snapshot",
+      "kind": "Evidence",
+      "label": "controller snapshot for slot BD1:1",
+      "payload": { "source": "fixture", "captured": "2026-01-01T00:00:00.000Z" }
+    },
+    {
+      "key": "ev_request",
+      "kind": "Evidence",
+      "label": "transfer request record for PJ5860",
+      "payload": { "source": "fixture" }
+    },
+    {
+      "key": "st_hold",
+      "kind": "State",
+      "label": "slot BD1:1 carries an active Hold",
+      "payload": {}
+    },
+    {
+      "key": "st_owner",
+      "kind": "State",
+      "label": "Hold owner on slot BD1:1 is PJ4210",
+      "payload": {}
+    },
+    {
+      "key": "st_mismatch",
+      "kind": "State",
+      "label": "Hold owner PJ4210 differs from requesting PJ5860",
+      "payload": {}
+    },
+    {
+      "key": "st_not_ready",
+      "kind": "State",
+      "label": "slot BD1:1 reports Ready=false",
+      "payload": {}
+    }
+  ],
+  "edges": [
+    {
+      "key": "E_hold",
+      "sources": ["ev_snapshot"],
+      "targets": ["st_hold"],
+      "label": "snapshot shows an active Hold on the slot",
+      "cost": 1,
+      "priority": 10,
+      "questions": [
+        {
+          "prompt": "What does the snapshot record for the Hold flag on BD1:1?",
+          "answer": "The snapshot records Hold=true for slot BD1:1."
+        }
+      ]
+    },
+    {
+      "key": "E_owner",
+      "sources": ["ev_snapshot"],
+      "targets": ["st_owner"],
+      "label": "snapshot identifies the Hold owner",
+      "cost": 1,
+      "priority": 8,
+      "questions": [
+        {
+          "prompt": "Which identifier does the snapshot list as the Hold owner?",
+          "answer": "The snapshot lists PJ4210 as the Hold owner."
+        }
+      ]
+    },
+    {
+      "key": "E_mismatch",
+      "sources": ["st_hold", "st_owner"],
+      "targets": ["st_mismatch"],
+      "label": "an active Hold owned by another request implies an ownership mismatch",
+      "cost": 2,
+      "priority": 6,
+      "questions": [
+        {
+          "prompt": "Does the requesting identifier match the recorded Hold owner?",
+          "answer": "No. The request is PJ5860 while the recorded owner is PJ4210."
+        }
+      ]
+    },
+    {
+      "key": "E_not_ready",
+      "sources": ["ev_snapshot"],
+      "targets": ["st_not_ready"],
+      "label": "snapshot shows the slot is not Ready",
+      "cost": 1,
+      "priority": 4,
+      "questions": [
+        {
+          "prompt": "What Ready value does the snapshot record for BD1:1?",
+          "answer": "The snapshot records Ready=false."
+        }
+      ]
+    },
+    {
+      "key": "E_goal",
+      "sources": ["st_mismatch", "st_not_ready", "ev_request"],
+      "targets": ["__goal__"],
+      "label": "ownership mismatch plus not-Ready explains the blocked request",
+      "cost": 3,
+      "priority": 2,
+      "questions": [
+        {
+          "prompt": "Do the mismatch and the Ready state together account for the blocked request?",
+          "answer": "Yes. The slot is held by a different request and is not Ready, so PJ5860 cannot proceed."
+        }
+      ]
+    }
+  ],
+  "expectations": {
+    "totalEdges": 5,
+    "multiPremiseEdgeKeys": ["E_mismatch", "E_goal"],
+    "goalMustBeSupported": true
+  }
+}

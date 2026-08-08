@@ -1,0 +1,23 @@
+{
+  "name": "@reasoner/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc --build tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "node --watch dist/main.js"
+  },
+  "dependencies": {
+    "@fastify/static": "10.1.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@reasoner/core": "workspace:*",
+    "@reasoner/logging": "workspace:*",
+    "@reasoner/mcp": "workspace:*",
+    "@reasoner/schema": "workspace:*",
+    "@reasoner/storage": "workspace:*",
+    "fastify": "5.11.2",
+    "zod": "3.25.76"
+  }
+}

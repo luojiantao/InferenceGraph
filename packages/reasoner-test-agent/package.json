@@ -1,0 +1,24 @@
+{
+  "name": "@reasoner/test-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.json && node -e \"require('node:fs').cpSync('src/fixtures','dist/fixtures',{recursive:true})\"",
+    "replay:bd1": "node dist/bd1-cli.js"
+  },
+  "dependencies": {
+    "@reasoner/core": "workspace:*",
+    "@reasoner/schema": "workspace:*",
+    "@reasoner/storage": "workspace:*",
+    "zod": "3.25.76"
+  }
+}

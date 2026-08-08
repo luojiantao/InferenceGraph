@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local reasoner data store (SQLite + JSONL audit); never committed.
+data/
+
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.vitest/
+
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*
+!.env.example

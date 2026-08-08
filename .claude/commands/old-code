@@ -1,0 +1,15 @@
+---
+description: "开启old-code skill代码临摹模式"
+triggers:
+  - old-code
+---
+
+# old-code 命令
+**调用old-code Skill**：
+默认进入old-code Skill 原理反问模式
+
+# 调用方式
+- `old-code` — 默认进入old-code Skill 原理反问模式
+- `old-code -c` — 进入old-code Skill 代码临摹模式
+- `old-code -p` — 进入old-code Skill 原理反问模式
+

@@ -1,0 +1,28 @@
+{
+  "name": "@reasoner/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@reasoner/schema": "workspace:*",
+    "@tanstack/react-query": "5.101.4",
+    "cytoscape": "3.34.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zustand": "5.0.14",
+    "cytoscape-dagre": "2.5.0"
+  },
+  "devDependencies": {
+    "@types/cytoscape": "3.31.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "vite": "8.2.1",
+    "@types/cytoscape-dagre": "2.3.3"
+  }
+}

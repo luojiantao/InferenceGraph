@@ -1,0 +1,37 @@
+{
+  "name": "inference-graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --build tsconfig.build.json",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "build": "pnpm --filter \"./packages/**\" --filter \"./apps/**\" -r build",
+    "test:e2e": "playwright test",
+    "server:dev": "pnpm --filter @reasoner/server dev",
+    "web:dev": "pnpm --filter @reasoner/web dev",
+    "replay:bd1": "pnpm --filter @reasoner/test-agent replay:bd1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@playwright/test": "1.57.0",
+    "@reasoner/core": "workspace:*",
+    "@reasoner/logging": "workspace:*",
+    "@reasoner/mcp": "workspace:*",
+    "@reasoner/schema": "workspace:*",
+    "@reasoner/storage": "workspace:*",
+    "@reasoner/test-agent": "workspace:*",
+    "@types/node": "24.10.2",
+    "eslint": "9.39.1",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.47.0",
+    "vitest": "3.2.4"
+  }
+}
