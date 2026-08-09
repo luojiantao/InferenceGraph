@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "files": [],
+  "references": [
+    { "path": "packages/reasoner-schema" },
+    { "path": "packages/reasoner-core" },
+    { "path": "packages/reasoner-logging" },
+    { "path": "packages/reasoner-mcp" },
+    { "path": "packages/reasoner-storage" },
+    { "path": "packages/reasoner-test-agent" },
+    { "path": "apps/reasoner-server" }
+  ]
+}

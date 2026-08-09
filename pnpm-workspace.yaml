@@ -6,3 +6,7 @@ packages:
 # require it. No other dependency is allowed to run install scripts.
 allowBuilds:
   esbuild: true
+
+# Dependencies are installed explicitly; avoid an automatic modules purge in
+# non-interactive shells when generated pnpm metadata is stale after a move.
+verifyDepsBeforeRun: false

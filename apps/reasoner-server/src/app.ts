@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -21,6 +22,22 @@ export interface ReasonerApplication {
   listen(): Promise<string>;
   close(): Promise<void>;
 }
+
+interface McpHttpSession {
+  readonly mcp: ReasonerMcpRuntime;
+  readonly transport: StreamableHTTPServerTransport;
+  close(): Promise<void>;
+}
+
+const isInitializeRequestBody = (body: unknown): boolean => {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some(
+    (message) =>
+      typeof message === 'object' &&
+      message !== null &&
+      (message as { method?: unknown }).method === 'initialize',
+  );
+};
 
 /**
  * Composes storage, Core and the MCP surface behind Fastify. This layer only
@@ -50,6 +67,48 @@ export const createReasonerApplication = async (
   const mcp = createReasonerMcpServer(service, {
     logger: log.child({ component: 'mcp' }),
   });
+
+  /** Each MCP client gets its own server/transport pair and session id. */
+  const mcpSessions = new Map<string, McpHttpSession>();
+  const createMcpHttpSession = async (): Promise<McpHttpSession> => {
+    const sessionMcp = createReasonerMcpServer(service, {
+      logger: log.child({ component: 'mcp' }),
+    });
+    let closed = false;
+    const sessionRef: { current?: McpHttpSession } = {};
+    const getSession = (): McpHttpSession => {
+      const session = sessionRef.current;
+      if (session === undefined) {
+        throw new Error('MCP session callback fired before session initialization');
+      }
+      return session;
+    };
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await sessionMcp.close();
+    };
+    const transport = new StreamableHTTPServerTransport({
+      enableJsonResponse: true,
+      sessionIdGenerator: randomUUID,
+      onsessioninitialized: (sessionId) => {
+        mcpSessions.set(sessionId, getSession());
+      },
+      onsessionclosed: async (sessionId) => {
+        if (mcpSessions.get(sessionId) === sessionRef.current) {
+          mcpSessions.delete(sessionId);
+        }
+        await close();
+      },
+    });
+
+    const session = { mcp: sessionMcp, transport, close };
+    sessionRef.current = session;
+    await sessionMcp.server.connect(
+      transport as unknown as Parameters<typeof sessionMcp.server.connect>[0],
+    );
+    return session;
+  };
 
   /**
    * Fastify builds its own logger for HTTP traffic. Application-level logs
@@ -136,25 +195,31 @@ export const createReasonerApplication = async (
     return reply.send(result.value);
   });
 
-  /**
-   * MCP Streamable HTTP in stateless mode: omitting `sessionIdGenerator`
-   * disables session management (per the SDK's documented behaviour), which
-   * suits a local single-process server. The key is omitted rather than set to
-   * undefined because `exactOptionalPropertyTypes` distinguishes the two.
-   */
-  const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
-
-  /**
-   * The SDK's own transport class types `onclose` as `(() => void) | undefined`
-   * while its Transport interface declares `onclose?: () => void`. Under
-   * `exactOptionalPropertyTypes` those are incompatible, so this cast bridges an
-   * SDK-internal typing mismatch — not a behavioural shortcut.
-   */
-  await mcp.server.connect(transport as unknown as Parameters<typeof mcp.server.connect>[0]);
-
   fastify.all('/mcp', async (request, reply) => {
+    const rawSessionId = request.headers['mcp-session-id'];
+    const sessionId = typeof rawSessionId === 'string' ? rawSessionId : undefined;
+    let session = sessionId === undefined ? undefined : mcpSessions.get(sessionId);
+
+    if (session === undefined) {
+      if (sessionId !== undefined) {
+        return reply.status(404).send({
+          jsonrpc: '2.0',
+          error: { code: -32001, message: 'Session not found' },
+          id: null,
+        });
+      }
+      if (!isInitializeRequestBody(request.body)) {
+        return reply.status(400).send({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Mcp-Session-Id header is required' },
+          id: null,
+        });
+      }
+      session = await createMcpHttpSession();
+    }
+
     reply.hijack();
-    await transport.handleRequest(request.raw, reply.raw, request.body);
+    await session.transport.handleRequest(request.raw, reply.raw, request.body);
   });
 
   if (config.webRoot !== undefined) {
@@ -180,6 +245,11 @@ export const createReasonerApplication = async (
     },
     close: async (): Promise<void> => {
       await fastify.close();
+      for (const session of mcpSessions.values()) {
+        await session.transport.close();
+        await session.close();
+      }
+      mcpSessions.clear();
       await mcp.close();
       storage.close();
       // Flush last: everything above may log while shutting down.

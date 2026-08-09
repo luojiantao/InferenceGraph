@@ -8,7 +8,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "typecheck": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc --build tsconfig.build.json && tsc --noEmit -p apps/reasoner-web/tsconfig.json",
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "test": "vitest run",
