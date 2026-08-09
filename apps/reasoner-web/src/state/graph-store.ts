@@ -3,6 +3,7 @@ import type { EdgeId, GetReasoningContextOutput, GraphEvent, SessionId, VertexId
 
 export type SelectionKind = 'Edge' | 'Vertex' | null;
 export type ViewMode = 'Status' | 'Audit';
+export type GraphScope = 'All' | 'CurrentVertex' | 'Dependencies';
 /**
  * Reconnecting is entered on the first failed poll and only escalates to Lost
  * after repeated failures, so a single dropped request does not flash an alarm.
@@ -20,7 +21,10 @@ interface GraphState {
   readonly events: readonly GraphEvent[];
   readonly selectionKind: SelectionKind;
   readonly selectedEdgeId: EdgeId | null;
+  /** Synthetic Cytoscape arc id; only set when the user clicks a rendered line. */
+  readonly selectedArcId: string | null;
   readonly selectedVertexId: VertexId | null;
+  readonly graphScope: GraphScope;
   readonly connection: ConnectionState;
   readonly consecutiveFailures: number;
   readonly staleDropCount: number;
@@ -29,8 +33,9 @@ interface GraphState {
   setViewMode(mode: ViewMode): void;
   applyView(view: GetReasoningContextOutput): void;
   reportPollFailure(): void;
-  selectEdge(edgeId: EdgeId): void;
+  selectEdge(edgeId: EdgeId, arcId?: string): void;
   selectVertex(vertexId: VertexId): void;
+  setGraphScope(scope: GraphScope): void;
   clearSelection(): void;
 }
 
@@ -48,7 +53,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   events: [],
   selectionKind: null,
   selectedEdgeId: null,
+  selectedArcId: null,
   selectedVertexId: null,
+  graphScope: 'All',
   connection: 'Live',
   consecutiveFailures: 0,
   staleDropCount: 0,
@@ -64,7 +71,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       events: [],
       selectionKind: null,
       selectedEdgeId: null,
+      selectedArcId: null,
       selectedVertexId: null,
+      graphScope: 'All',
       connection: 'Live',
       consecutiveFailures: 0,
     });
@@ -115,9 +124,23 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     });
   },
 
-  selectEdge: (edgeId) =>
-    set({ selectionKind: 'Edge', selectedEdgeId: edgeId, selectedVertexId: null }),
+  selectEdge: (edgeId, arcId) =>
+    set({
+      selectionKind: 'Edge',
+      selectedEdgeId: edgeId,
+      selectedArcId: arcId ?? null,
+      selectedVertexId: null,
+      graphScope: 'All',
+    }),
   selectVertex: (vertexId) =>
-    set({ selectionKind: 'Vertex', selectedVertexId: vertexId, selectedEdgeId: null }),
-  clearSelection: () => set({ selectionKind: null, selectedEdgeId: null, selectedVertexId: null }),
+    set({ selectionKind: 'Vertex', selectedVertexId: vertexId, selectedEdgeId: null, selectedArcId: null }),
+  setGraphScope: (scope) => set({ graphScope: scope }),
+  clearSelection: () =>
+    set({
+      selectionKind: null,
+      selectedEdgeId: null,
+      selectedArcId: null,
+      selectedVertexId: null,
+      graphScope: 'All',
+    }),
 }));

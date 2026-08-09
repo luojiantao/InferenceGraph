@@ -50,7 +50,7 @@ const invokeTool = async <T>(tool: string, input: unknown, signal?: AbortSignal)
 
 export const reasonerApi = {
   listSessions: (signal?: AbortSignal): Promise<ListReasoningSessionsOutput> =>
-    invokeTool('list_reasoning_sessions', { limit: 100 }, signal),
+    invokeTool('list_reasoning_sessions', { limit: 100, includeFinished: true }, signal),
 
   /**
    * Single polling endpoint: snapshot, ordered frontier, state counts and the

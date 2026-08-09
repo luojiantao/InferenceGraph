@@ -20,7 +20,10 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.5 'Segoe UI', system-ui, sans-serif;
+  font:
+    14px/1.5 'Segoe UI',
+    system-ui,
+    sans-serif;
 }
 
 .mono,
@@ -91,6 +94,161 @@ button:disabled {
 .tab.active {
   background: #2f3646;
   border-color: var(--focus);
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0 12px 12px;
+}
+.segmented-control button {
+  min-width: 0;
+  border-radius: 0;
+  padding-inline: 6px;
+}
+.segmented-control button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.segmented-control button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+.segmented-control button + button {
+  border-left-width: 0;
+}
+.segmented-control button.active {
+  background: #2f3646;
+  border-color: var(--focus);
+}
+
+.vertex-reasoning {
+  padding: 0 12px 14px;
+}
+.vertex-reasoning > h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.vertex-reasoning > p {
+  margin: 0;
+}
+.inference-formula-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+}
+.inference-formula-list > li + li {
+  border-top: 1px solid var(--line);
+}
+.inference-formula {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  background: #20242e;
+  border: 0;
+  border-radius: 0;
+}
+.inference-formula:hover:not(:disabled) {
+  background: #282d39;
+}
+.inference-formula code {
+  color: var(--fg);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.edge-primary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 8px;
+}
+.edge-description {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.detail-button {
+  flex: 0 0 auto;
+}
+.edge-evidence {
+  padding: 0 12px 12px;
+}
+.edge-evidence > h3 {
+  margin: 6px 0 8px;
+  font-size: 13px;
+}
+.question-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.question-list > li {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  padding: 9px 10px;
+}
+.question-list > li.open {
+  border-left-color: var(--candidate);
+}
+.question-list > li.answered {
+  border-left-color: var(--completed);
+}
+.question-text,
+.answer {
+  margin: 0;
+}
+.answer {
+  margin-top: 6px;
+  color: var(--fg);
+}
+
+.detail-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(80vh, 760px);
+  margin: auto;
+  padding: 0;
+  color: var(--fg);
+  background: var(--pane);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 20px 70px rgb(0 0 0 / 45%);
+}
+.detail-dialog::backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+.detail-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.detail-dialog-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.detail-close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+.detail-dialog-body {
+  max-height: calc(min(80vh, 760px) - 55px);
+  overflow: auto;
+  padding: 14px;
+}
+.detail-dialog-body > h3 {
+  margin: 18px 0 8px;
+  font-size: 13px;
 }
 
 .chip {
@@ -226,7 +384,7 @@ dl.kv > dd {
   color: var(--blocked);
 }
 
-.canvas {
+.graph-canvas {
   width: 100%;
   height: 100%;
 }

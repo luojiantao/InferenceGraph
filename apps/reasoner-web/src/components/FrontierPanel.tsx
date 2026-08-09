@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { EdgeId } from '@reasoner/schema';
 import { useGraphStore } from '../state/graph-store.js';
+import { buildGraphAliases } from './graph-aliases.js';
 
 /**
  * The candidate frontier in the exact order Core's strategy returns it, so the
@@ -14,6 +15,7 @@ export const FrontierPanel = (): ReactElement => {
   if (view === null) return <p className="muted">尚未加载会话。</p>;
 
   const byId = new Map(view.snapshot.edges.map((edge) => [edge.edgeId, edge]));
+  const aliases = buildGraphAliases(view.snapshot);
   const frontier = view.frontierEdgeIds;
 
   return (
@@ -40,7 +42,9 @@ export const FrontierPanel = (): ReactElement => {
                 >
                   <span className="rank">{index + 1}</span>
                   <span className="row-main">
-                    <span className="row-title">{edge.label}</span>
+                    <span className="row-title">
+                      {aliases.edgeGroupById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
+                    </span>
                     <span className="muted small">
                       cost {edge.cost} · priority {edge.priority}
                       {edge.evidenceQuestions.length > 0

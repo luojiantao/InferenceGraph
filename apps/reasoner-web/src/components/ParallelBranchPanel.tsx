@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { useGraphStore } from '../state/graph-store.js';
+import { buildGraphAliases } from './graph-aliases.js';
 
 /** Live lease view: which agent holds which edge, and when that lease expires. */
 export const ParallelBranchPanel = (): ReactElement => {
@@ -8,6 +9,7 @@ export const ParallelBranchPanel = (): ReactElement => {
 
   if (view === null) return <p className="muted">尚未加载会话。</p>;
 
+  const aliases = buildGraphAliases(view.snapshot);
   const leased = view.snapshot.edges.filter((edge) => edge.state === 'Leased');
   const byAgent = new Map<string, typeof leased>();
   for (const edge of leased) {
@@ -35,8 +37,12 @@ export const ParallelBranchPanel = (): ReactElement => {
                 <ul className="link-list">
                   {edges.map((edge) => (
                     <li key={edge.edgeId}>
-                      <button type="button" className="link" onClick={() => selectEdge(edge.edgeId)}>
-                        {edge.label}
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={() => selectEdge(edge.edgeId)}
+                      >
+                        {aliases.edgeGroupById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
                       </button>
                       {edge.lease !== undefined && (
                         <span className="muted small"> · 到期 {edge.lease.expiresAt}</span>

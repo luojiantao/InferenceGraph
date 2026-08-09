@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react';
-import cytoscape, { type Core, type ElementDefinition, type NodeSingular } from 'cytoscape';
+import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import dagre, { type DagreLayoutOptions } from 'cytoscape-dagre';
 import type { EdgeId, GraphSnapshot, VertexId } from '@reasoner/schema';
-import { useGraphStore } from '../state/graph-store.js';
+import { useGraphStore, type GraphScope } from '../state/graph-store.js';
+import { buildArcId, buildGraphAliases } from './graph-aliases.js';
 
 cytoscape.use(dagre);
 
@@ -11,7 +12,7 @@ const DAGRE_LAYOUT = {
   name: 'dagre',
   rankDir: 'LR',
   nodeSep: 28,
-  rankSep: 70,
+  rankSep: 120,
   fit: false,
 } satisfies DagreLayoutOptions;
 
@@ -24,24 +25,73 @@ const EDGE_COLORS: Record<string, string> = {
   Invalid: '#8b2f6b',
 };
 
+interface VisibleSubgraph {
+  readonly vertexIds: ReadonlySet<VertexId>;
+  readonly edgeIds: ReadonlySet<EdgeId>;
+}
+
+const fullGraph = (snapshot: GraphSnapshot): VisibleSubgraph => ({
+  vertexIds: new Set(snapshot.vertices.map((vertex) => vertex.vertexId)),
+  edgeIds: new Set(snapshot.edges.map((edge) => edge.edgeId)),
+});
+
+/** Builds the upstream dependency subgraph required to derive a selected vertex. */
+const visibleSubgraph = (
+  snapshot: GraphSnapshot,
+  selectedVertexId: VertexId | null,
+  scope: GraphScope,
+): VisibleSubgraph => {
+  if (scope === 'All' || selectedVertexId === null) return fullGraph(snapshot);
+  if (scope === 'CurrentVertex') {
+    return { vertexIds: new Set([selectedVertexId]), edgeIds: new Set() };
+  }
+
+  const vertexIds = new Set<VertexId>([selectedVertexId]);
+  const edgeIds = new Set<EdgeId>();
+  const visitedTargets = new Set<VertexId>();
+  const pendingTargets: VertexId[] = [selectedVertexId];
+
+  while (pendingTargets.length > 0) {
+    const targetId = pendingTargets.pop();
+    if (targetId === undefined || visitedTargets.has(targetId)) continue;
+    visitedTargets.add(targetId);
+
+    for (const edge of snapshot.edges) {
+      if (!edge.targetVertexIds.includes(targetId)) continue;
+      edgeIds.add(edge.edgeId);
+      for (const vertexId of edge.targetVertexIds) vertexIds.add(vertexId);
+      for (const vertexId of edge.sourceVertexIds) {
+        vertexIds.add(vertexId);
+        if (!visitedTargets.has(vertexId)) pendingTargets.push(vertexId);
+      }
+    }
+  }
+
+  return { vertexIds, edgeIds };
+};
+
 /**
- * A hyperedge cannot be drawn as one SVG line when it has several sources or
- * targets, so each inference edge becomes a small relay node with incoming arcs
- * from every source and outgoing arcs to every target. This mirrors the
- * bipartite incidence graph Core reasons over.
- *
- * EvidenceQuestions stay edge attributes and are rendered as a badge on the
- * relay node, never as their own vertex.
+ * The canvas contains only domain vertices and direct source-to-target arcs.
+ * A logical inference edge with several sources or targets is expanded into
+ * arcs that share its inferenceEdgeId; no synthetic relay vertex is created.
  */
-const toElements = (snapshot: GraphSnapshot, frontier: readonly EdgeId[]): ElementDefinition[] => {
+const toElements = (
+  snapshot: GraphSnapshot,
+  frontier: readonly EdgeId[],
+  selectedVertexId: VertexId | null,
+  scope: GraphScope,
+): ElementDefinition[] => {
   const frontierSet = new Set<string>(frontier);
+  const visible = visibleSubgraph(snapshot, selectedVertexId, scope);
+  const aliases = buildGraphAliases(snapshot);
   const elements: ElementDefinition[] = [];
 
   for (const vertex of snapshot.vertices) {
+    if (!visible.vertexIds.has(vertex.vertexId)) continue;
     elements.push({
       data: {
         id: vertex.vertexId,
-        label: vertex.label,
+        label: `${aliases.vertexById.get(vertex.vertexId) ?? vertex.vertexId}: ${vertex.label}`,
         kind: vertex.kind,
         isGoal: vertex.vertexId === snapshot.session.goalVertexId,
       },
@@ -52,41 +102,23 @@ const toElements = (snapshot: GraphSnapshot, frontier: readonly EdgeId[]): Eleme
   }
 
   for (const edge of snapshot.edges) {
-    const unanswered = edge.evidenceQuestions.filter((question) => question.answer === undefined);
-    elements.push({
-      data: {
-        id: edge.edgeId,
-        label: edge.label,
-        state: edge.state,
-        questionCount: edge.evidenceQuestions.length,
-        unansweredCount: unanswered.length,
-        agent: edge.lease?.agentId ?? '',
-        onFrontier: frontierSet.has(edge.edgeId),
-      },
-      classes: `relay state-${edge.state}${frontierSet.has(edge.edgeId) ? ' frontier' : ''}`,
-    });
+    if (!visible.edgeIds.has(edge.edgeId)) continue;
 
     for (const sourceId of edge.sourceVertexIds) {
-      elements.push({
-        data: {
-          id: `${edge.edgeId}::in::${sourceId}`,
-          source: sourceId,
-          target: edge.edgeId,
-          state: edge.state,
-        },
-        classes: `arc state-${edge.state}`,
-      });
-    }
-    for (const targetId of edge.targetVertexIds) {
-      elements.push({
-        data: {
-          id: `${edge.edgeId}::out::${targetId}`,
-          source: edge.edgeId,
-          target: targetId,
-          state: edge.state,
-        },
-        classes: `arc state-${edge.state}`,
-      });
+      for (const targetId of edge.targetVertexIds) {
+        const arcId = buildArcId(edge.edgeId, sourceId, targetId);
+        elements.push({
+          data: {
+            id: arcId,
+            source: sourceId,
+            target: targetId,
+            inferenceEdgeId: edge.edgeId,
+            alias: aliases.arcById.get(arcId) ?? edge.edgeId,
+            state: edge.state,
+          },
+          classes: `arc state-${edge.state}${frontierSet.has(edge.edgeId) ? ' frontier' : ''}`,
+        });
+      }
     }
   }
 
@@ -96,15 +128,27 @@ const toElements = (snapshot: GraphSnapshot, frontier: readonly EdgeId[]): Eleme
 export const GraphCanvas = (): ReactElement => {
   const container = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  const hasFittedRef = useRef(false);
+  const lastViewportScopeRef = useRef<string>('All');
+  const lastSessionIdRef = useRef<string | null>(null);
   const view = useGraphStore((state) => state.view);
   const selectEdge = useGraphStore((state) => state.selectEdge);
   const selectVertex = useGraphStore((state) => state.selectVertex);
+  const clearSelection = useGraphStore((state) => state.clearSelection);
   const selectedEdgeId = useGraphStore((state) => state.selectedEdgeId);
+  const selectedArcId = useGraphStore((state) => state.selectedArcId);
   const selectedVertexId = useGraphStore((state) => state.selectedVertexId);
+  const graphScope = useGraphStore((state) => state.graphScope);
+  const renderedSessionId = view?.snapshot.session.sessionId ?? null;
+  const viewportScope =
+    selectedVertexId === null || graphScope === 'All' ? 'All' : `${graphScope}:${selectedVertexId}`;
 
   const elements = useMemo(
-    () => (view === null ? [] : toElements(view.snapshot, view.frontierEdgeIds)),
-    [view],
+    () =>
+      view === null
+        ? []
+        : toElements(view.snapshot, view.frontierEdgeIds, selectedVertexId, graphScope),
+    [view, selectedVertexId, graphScope],
   );
 
   useEffect(() => {
@@ -138,28 +182,7 @@ export const GraphCanvas = (): ReactElement => {
         },
         {
           selector: 'node.goal',
-          style: { 'border-color': '#e0b341', 'border-width': 3 },
-        },
-        {
-          selector: 'node.relay',
-          style: {
-            shape: 'ellipse',
-            width: 16,
-            height: 16,
-            'background-color': (element) =>
-              EDGE_COLORS[String(element.data('state'))] ?? '#8a8f98',
-            label: (element: NodeSingular) =>
-              Number(element.data('questionCount')) > 0
-                ? `${element.data('unansweredCount')}/${element.data('questionCount')}?`
-                : '',
-            color: '#c9ced6',
-            'font-size': 9,
-            'text-valign': 'top',
-            'text-margin-y': -4,
-          },
-        },
-        {
-          selector: 'node.relay.frontier',
+          // Yellow is reserved for the one physical arc the user selected.
           style: { 'border-color': '#6fa8ff', 'border-width': 3 },
         },
         {
@@ -172,6 +195,13 @@ export const GraphCanvas = (): ReactElement => {
             'line-color': (element) => EDGE_COLORS[String(element.data('state'))] ?? '#8a8f98',
             'target-arrow-color': (element) =>
               EDGE_COLORS[String(element.data('state'))] ?? '#8a8f98',
+            label: 'data(alias)',
+            color: '#c7cbd4',
+            'font-size': 10,
+            'text-rotation': 'autorotate',
+            'text-background-color': '#12141a',
+            'text-background-opacity': 0.9,
+            'text-background-padding': '2px',
           },
         },
         // Candidate edges are dashed; Completed edges are solid.
@@ -191,19 +221,38 @@ export const GraphCanvas = (): ReactElement => {
           selector: '.selected-element',
           style: { 'overlay-color': '#6fa8ff', 'overlay-opacity': 0.3, 'overlay-padding': 6 },
         },
+        {
+          selector: 'edge.arc.selected-edge',
+          style: {
+            width: 3,
+            'line-color': '#e0b341',
+            'target-arrow-color': '#e0b341',
+            color: '#f2ca58',
+            'arrow-scale': 1.05,
+            'z-index': 10,
+          },
+        },
       ],
       wheelSensitivity: 0.2,
+      // The app owns selection state so Cytoscape cannot add a second,
+      // implicit highlight to related elements.
+      autounselectify: true,
     });
 
-    cy.on('tap', 'node.relay', (event) => selectEdge(event.target.id() as EdgeId));
+    cy.on('tap', 'edge.arc', (event) =>
+      selectEdge(event.target.data('inferenceEdgeId') as EdgeId, event.target.id()),
+    );
     cy.on('tap', 'node.vertex', (event) => selectVertex(event.target.id() as VertexId));
+    cy.on('tap', (event) => {
+      if (event.target === cy) clearSelection();
+    });
 
     cyRef.current = cy;
     return () => {
       cy.destroy();
       cyRef.current = null;
     };
-  }, [selectEdge, selectVertex]);
+  }, [clearSelection, selectEdge, selectVertex]);
 
   // Diff elements into the live instance so pan/zoom survives every poll.
   useEffect(() => {
@@ -240,16 +289,37 @@ export const GraphCanvas = (): ReactElement => {
      */
     if (topologyChanged && elements.length > 0) {
       cy.layout(DAGRE_LAYOUT).run();
+      if (
+        !hasFittedRef.current ||
+        lastViewportScopeRef.current !== viewportScope ||
+        lastSessionIdRef.current !== renderedSessionId
+      ) {
+        if (cy.nodes().length === 1) {
+          cy.center(cy.elements());
+        } else {
+          cy.fit(cy.elements(), 48);
+        }
+        hasFittedRef.current = true;
+      }
     }
-  }, [elements]);
+    lastViewportScopeRef.current = viewportScope;
+    lastSessionIdRef.current = renderedSessionId;
+  }, [elements, renderedSessionId, viewportScope]);
 
   useEffect(() => {
     const cy = cyRef.current;
     if (cy === null) return;
-    cy.elements().removeClass('selected-element');
-    const id = selectedEdgeId ?? selectedVertexId;
-    if (id !== null) cy.getElementById(id).addClass('selected-element');
-  }, [selectedEdgeId, selectedVertexId]);
+    cy.elements().removeClass('selected-element selected-edge');
 
-  return <div className="graph-canvas" ref={container} role="application" aria-label="推理图画布" />;
+    if (selectedArcId !== null) {
+      cy.getElementById(selectedArcId).addClass('selected-edge');
+      return;
+    }
+
+    if (selectedVertexId !== null) cy.getElementById(selectedVertexId).addClass('selected-element');
+  }, [elements, selectedArcId, selectedEdgeId, selectedVertexId]);
+
+  return (
+    <div className="graph-canvas" ref={container} role="application" aria-label="推理图画布" />
+  );
 };
