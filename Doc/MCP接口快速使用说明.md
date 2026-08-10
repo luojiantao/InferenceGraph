@@ -2,7 +2,7 @@
 
 本文面向调用 InferenceGraph 的 Agent、MCP Host 和运维人员。内容以当前运行中的
 `/health`、`/api/tools` 以及源码中的工具注册和 Zod Schema 为准：服务通过 Streamable HTTP
-提供 23 个 MCP 工具，用于记录、调度和校验证据推理图；服务不会自行生成领域事实或结论。
+提供 25 个 MCP 工具，用于记录、调度、校验和手动校正证据推理图；服务不会自行生成领域事实或结论。
 
 完整的协议握手、所有字段范围和 Node SDK 示例见
 [MCP 接入与使用指南](MCP接入与使用指南.md)。
@@ -67,7 +67,7 @@ DELETE /mcp
 `/api/tools/:tool` 是 Web UI 和诊断脚本可用的直接 JSON bridge，不是 MCP transport。
 MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配置成 MCP 地址。
 
-## 3. 23 个工具如何选择
+## 3. 25 个工具如何选择
 
 | 分组   | 工具                                               | 何时使用                                                               |
 | ------ | -------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -80,8 +80,10 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 | 顶点   | `add_state_vertex`                                 | 写入待推导或已经观察到的状态。                                         |
 | 顶点   | `add_evidence_vertex`                              | 写入日志、源码、快照等直接证据。                                       |
 | 顶点   | `get_vertex`                                       | 查询顶点及其入边、出边。                                               |
+| 顶点   | `update_vertex`                                    | 校正顶点标签和 JSON 载荷；不会改写 `Vn` 或顶点类型。                   |
 | 建模   | `propose_inference_edge`                           | 提出候选推理关系和每条关系的证据问题。                                 |
 | 前沿   | `get_inference_edge`、`list_candidate_edges`       | 查看具体边或按 DFS/BFS/Priority 选择可处理的候选边。                   |
+| 建模   | `update_inference_edge`                            | 调整边描述、成本、优先级和 Candidate 状态边的取证问题。                |
 | 租约   | `claim_inference_edge`、`claim_inference_edges`    | 独占领取一条或一批候选边，并获得执行上下文与 context hash。            |
 | 租约   | `release_inference_edge`                           | 暂时无法处理时放弃租约，让边回到候选前沿。                             |
 | 取证   | `answer_evidence_question`                         | 对已领取边记录可审计的证据回答。                                       |
@@ -117,6 +119,8 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 ```
 
 将 `alias` 设为 `null` 可清除别名；`delete_reasoning_session` 的调用还需把 `confirm` 设为 `true`。别名和标签只用于会话管理展示，不会改写图中已经分配的 `V1`、`E1` 等正式索引。
+
+顶点和边的手动编辑也必须携带当前 `baseGraphRevision`。`update_vertex` 只允许更新 `label` 和 `payload`，不会改变 `Vn`、顶点类型或创建信息；任何相连的边处于 `Leased` 时必须先释放租约。`update_inference_edge` 只允许更新 `label`、`cost`、`priority` 和 Candidate 边的完整 `evidenceQuestions` 列表，不能改写 `En`、来源/目标顶点、公式组或生命周期状态；处于 `Leased` 的边不能编辑。
 
 ## 4. 图和公式语义
 

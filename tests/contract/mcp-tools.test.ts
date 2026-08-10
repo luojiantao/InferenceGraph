@@ -43,8 +43,10 @@ const EXPECTED_TOOLS = [
   'add_state_vertex',
   'add_evidence_vertex',
   'get_vertex',
+  'update_vertex',
   'propose_inference_edge',
   'get_inference_edge',
+  'update_inference_edge',
   'list_candidate_edges',
   'claim_inference_edge',
   'claim_inference_edges',
@@ -59,11 +61,11 @@ const EXPECTED_TOOLS = [
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 23 agreed tools', () => {
+  it('exposes exactly the 25 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(23);
+    expect(names).toHaveLength(25);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -287,7 +289,7 @@ describe('MCP input validation', () => {
     if (!isOk(created)) throw new Error('session creation failed');
     const createdOut = created.value as {
       session: { sessionId: string; graphRevision: number };
-      goalVertex: { referenceId: string };
+      goalVertex: { vertexId: string; referenceId: string };
     };
     const session = createdOut.session;
     expect(createdOut.goalVertex.referenceId).toBe('V1');
@@ -352,6 +354,123 @@ describe('MCP input validation', () => {
         proposedOut.edge.edgeId,
       );
     }
+
+    storage.close();
+  });
+
+  it('updates editable vertex and candidate edge fields through Vn and En references', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'manual edit goal',
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const createdOut = created.value as {
+      session: { sessionId: string; graphRevision: number };
+      goalVertex: { vertexId: string };
+    };
+
+    const premise = await controller.invoke('add_state_vertex', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: createdOut.session.graphRevision,
+      agentId: 'agent-a',
+      label: 'original premise',
+      payload: { source: 'agent' },
+    });
+    if (!isOk(premise)) throw new Error('premise creation failed');
+    const premiseOut = premise.value as { graphRevision: number; vertex: { vertexId: string } };
+
+    const updatedVertex = await controller.invoke('update_vertex', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: premiseOut.graphRevision,
+      agentId: 'agent-a',
+      vertexId: 'V2',
+      label: 'corrected premise',
+      payload: { source: 'operator', reviewed: true },
+    });
+    if (!isOk(updatedVertex)) throw new Error('vertex update failed');
+    const vertexOut = updatedVertex.value as {
+      graphRevision: number;
+      vertex: { referenceId: string; label: string; payload: Record<string, unknown> };
+    };
+    expect(vertexOut.vertex.referenceId).toBe('V2');
+    expect(vertexOut.vertex.label).toBe('corrected premise');
+    expect(vertexOut.vertex.payload).toEqual({ source: 'operator', reviewed: true });
+
+    const proposed = await controller.invoke('propose_inference_edge', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: vertexOut.graphRevision,
+      agentId: 'agent-a',
+      sourceVertexIds: ['V2'],
+      targetVertexIds: ['V1'],
+      label: 'original relation',
+      cost: 1,
+      priority: 0,
+      evidenceQuestions: [{ prompt: 'original question' }],
+    });
+    if (!isOk(proposed)) throw new Error('edge proposal failed');
+    const edgeOut = proposed.value as {
+      graphRevision: number;
+      edge: { referenceId: string; evidenceQuestions: Array<{ questionId: string }> };
+    };
+    expect(edgeOut.edge.referenceId).toBe('E1');
+
+    const updatedEdge = await controller.invoke('update_inference_edge', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: edgeOut.graphRevision,
+      agentId: 'agent-a',
+      edgeId: 'E1',
+      label: 'corrected relation',
+      cost: 2.5,
+      priority: 8,
+      evidenceQuestions: [
+        {
+          questionId: edgeOut.edge.evidenceQuestions[0]?.questionId,
+          prompt: 'corrected question',
+        },
+      ],
+    });
+    if (!isOk(updatedEdge)) throw new Error('edge update failed');
+    const updatedEdgeOut = updatedEdge.value as {
+      graphRevision: number;
+      edge: {
+        referenceId: string;
+        label: string;
+        cost: number;
+        priority: number;
+        sourceVertexIds: string[];
+        targetVertexIds: string[];
+        evidenceQuestions: Array<{ prompt: string }>;
+      };
+    };
+    expect(updatedEdgeOut.edge).toMatchObject({
+      referenceId: 'E1',
+      label: 'corrected relation',
+      cost: 2.5,
+      priority: 8,
+      sourceVertexIds: [premiseOut.vertex.vertexId],
+      targetVertexIds: [createdOut.goalVertex.vertexId],
+    });
+    expect(updatedEdgeOut.edge.evidenceQuestions).toMatchObject([{ prompt: 'corrected question' }]);
+
+    const claimed = await controller.invoke('claim_inference_edge', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: updatedEdgeOut.graphRevision,
+      agentId: 'agent-a',
+      edgeId: 'E1',
+    });
+    if (!isOk(claimed)) throw new Error('edge claim failed');
+    const claimedOut = claimed.value as { graphRevision: number };
+
+    const rejectedWhileLeased = await controller.invoke('update_inference_edge', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: claimedOut.graphRevision,
+      agentId: 'agent-a',
+      edgeId: 'E1',
+      priority: 9,
+    });
+    expect(isErr(rejectedWhileLeased)).toBe(true);
+    if (isErr(rejectedWhileLeased)) expect(rejectedWhileLeased.error.code).toBe('InvalidInput');
 
     storage.close();
   });

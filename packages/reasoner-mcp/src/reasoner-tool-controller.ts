@@ -17,9 +17,11 @@ import {
   GetReasoningTextForVertexInputSchema,
   IncreaseReasoningSessionEdgeBudgetInputSchema,
   GetVertexInputSchema,
+  UpdateVertexInputSchema,
   ListCandidateEdgesInputSchema,
   ListReasoningSessionsInputSchema,
   ProposeInferenceEdgeInputSchema,
+  UpdateInferenceEdgeInputSchema,
   ReleaseInferenceEdgeInputSchema,
   AnswerEvidenceQuestionInputSchema,
   UpdateReasoningSessionMetadataInputSchema,
@@ -64,6 +66,7 @@ interface GraphReferenceInput {
 
 const VERTEX_REFERENCE_TOOLS = new Set([
   'get_vertex',
+  'update_vertex',
   'propose_inference_edge',
   'get_context_for_vertex',
   'get_reasoning_text_for_vertex',
@@ -71,6 +74,7 @@ const VERTEX_REFERENCE_TOOLS = new Set([
 
 const EDGE_REFERENCE_TOOLS = new Set([
   'get_inference_edge',
+  'update_inference_edge',
   'claim_inference_edge',
   'release_inference_edge',
   'answer_evidence_question',
@@ -226,6 +230,15 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       handler: (input) => service.getVertex(input),
     }),
     define({
+      name: 'update_vertex',
+      title: 'Update vertex',
+      description:
+        'Manually updates a vertex label and/or payload while preserving its Vn reference and structural kind. Leased relations must be released first.',
+      mutating: true,
+      inputSchema: UpdateVertexInputSchema,
+      handler: (input) => service.updateVertex(input),
+    }),
+    define({
       name: 'propose_inference_edge',
       title: 'Propose inference edge',
       description:
@@ -241,6 +254,15 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: false,
       inputSchema: GetInferenceEdgeInputSchema,
       handler: (input) => service.getInferenceEdge(input),
+    }),
+    define({
+      name: 'update_inference_edge',
+      title: 'Update inference edge',
+      description:
+        'Manually updates an edge label, cost, priority or Candidate evidence questions. Endpoints, formula group, En reference and lifecycle state remain immutable.',
+      mutating: true,
+      inputSchema: UpdateInferenceEdgeInputSchema,
+      handler: (input) => service.updateInferenceEdge(input),
     }),
     define({
       name: 'list_candidate_edges',

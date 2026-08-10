@@ -28,7 +28,7 @@ InferenceGraph 负责记录和调度推理过程，不负责：
 | 测试          | Vitest `3.2.4`、Playwright `1.57.0`                                        |
 | MCP HTTP 地址 | `http://127.0.0.1:8791/mcp`                                                |
 | Web 开发地址  | `http://127.0.0.1:5174`                                                    |
-| 工具数量      | 23 个（以 `tools/list` 为准）                                              |
+| 工具数量      | 25 个（以 `tools/list` 为准）                                              |
 | 认证          | 当前没有认证层，默认只绑定回环地址                                         |
 | stdio         | 当前没有 stdio server 入口                                                 |
 
@@ -41,7 +41,7 @@ InferenceGraph 负责记录和调度推理过程，不负责：
 - **上下文一致性**：领取边时保存执行上下文哈希，完成时必须提交领取时的 `inputContextHash`。
 - **结构保护**：完成推理边时拒绝会形成环的结果；Core 另提供恢复期结构校验方法。
 - **事件审计**：每个会话有严格递增的 `eventSeq`，多个事件可以共享同一个 `graphRevision`。
-- **可视化**：Web UI 展示图、候选前沿、边/顶点检查器、上下文投影、并行租约和事件时间线。
+- **可视化与手动校正**：Web UI 展示图、候选前沿、边/顶点检查器、上下文投影、并行租约和事件时间线，并可通过版本校验编辑顶点与推理边的可编辑字段。
 
 ## 目录结构
 
@@ -54,7 +54,7 @@ InferenceGraph/
 │   ├── reasoner-schema/       # Zod schema、ID、错误和领域类型
 │   ├── reasoner-core/         # 推理服务、图算法、前沿和上下文投影
 │   ├── reasoner-storage/      # SQLite repository、迁移和 JSONL 审计
-│   ├── reasoner-mcp/          # 23 个 MCP 工具及统一 controller
+│   ├── reasoner-mcp/          # 25 个 MCP 工具及统一 controller
 │   ├── reasoner-logging/      # Pino 文件日志、轮转和脱敏
 │   └── reasoner-test-agent/   # 不访问网络的 BD1 fixture 回放 CLI
 ├── tests/
@@ -118,7 +118,7 @@ curl http://127.0.0.1:8791/health
 预期响应：
 
 ```json
-{ "status": "ok", "tools": 23 }
+{ "status": "ok", "tools": 25 }
 ```
 
 ### 3. 启动 Web UI
@@ -289,7 +289,7 @@ finish_reasoning_session（需要显式结束时）
 
 例如一次调用传入 `sourceVertexIds: [V1, V3, V4]`、`targetVertexIds: [V9]` 时，会产生：`V1 -> V9 = E1`、`V3 -> V9 = E2`、`V4 -> V9 = E3`。三条线各自独立，但 `V9` 的公式是 `E1 ∧ E2 ∧ E3: V1 ∧ V3 ∧ V4 -> V9`，所以三条边都完成后才推出 `V9`。若另一次调用再为 `V9` 创建公式组，则完整的任一公式组即可推出 `V9`。响应中的 `edges` 按该顺序返回全部边；为兼容单边调用，`edge` 仍是其中第一条。批量展开为多条边时不能同时指定单个内部 `edgeId`。
 
-所有引用既有顶点或边的 MCP 参数都同时接受内部 ID 和 `Vn`/`En`：例如 `get_vertex`、`get_context_for_vertex`、`get_reasoning_text_for_vertex`、`propose_inference_edge` 的前提/结论数组，以及 `get_inference_edge`、领取、释放、完成、阻塞和 `get_context_for_edge`。服务会在调用业务逻辑前解析为内部 ID。新建顶点或边时可选的 `vertexId` / `edgeId` 仍表示调用方指定的内部 ID，但不得使用保留的 `Vn` / `En` 格式，以免与正式引用冲突。
+所有引用既有顶点或边的 MCP 参数都同时接受内部 ID 和 `Vn`/`En`：例如 `get_vertex`、`update_vertex`、`get_context_for_vertex`、`get_reasoning_text_for_vertex`、`propose_inference_edge` 的前提/结论数组，以及 `get_inference_edge`、`update_inference_edge`、领取、释放、完成、阻塞和 `get_context_for_edge`。服务会在调用业务逻辑前解析为内部 ID。新建顶点或边时可选的 `vertexId` / `edgeId` 仍表示调用方指定的内部 ID，但不得使用保留的 `Vn` / `En` 格式，以免与正式引用冲突。
 
 ### 会话和顶点
 
@@ -305,20 +305,22 @@ finish_reasoning_session（需要显式结束时）
 | `add_state_vertex`                       | 添加 State 顶点                                                | 是     |
 | `add_evidence_vertex`                    | 添加 Evidence 顶点                                             | 是     |
 | `get_vertex`                             | 读取顶点及其入/出边 ID                                         | 否     |
+| `update_vertex`                          | 更新顶点标签和 JSON 载荷；不改变 `Vn` 或类型                   | 是     |
 
 ### 推理边和租约
 
-| 工具                       | 作用                             | 修改图 |
-| -------------------------- | -------------------------------- | ------ |
-| `propose_inference_edge`   | 提出独立候选推理边及证据问题     | 是     |
-| `get_inference_edge`       | 读取边、状态、租约和问题         | 否     |
-| `list_candidate_edges`     | 按 DFS/BFS/Priority 返回候选前沿 | 否     |
-| `claim_inference_edge`     | 领取一条边并获得执行上下文       | 是     |
-| `claim_inference_edges`    | 按策略批量领取多条边             | 是     |
-| `release_inference_edge`   | 释放租约，使边回到候选前沿       | 是     |
-| `answer_evidence_question` | 记录租约持有者对问题的回答       | 是     |
-| `complete_inference_edge`  | 使用上下文哈希完成边并检查环     | 是     |
-| `block_inference_edge`     | 以原因阻塞一条边                 | 是     |
+| 工具                       | 作用                               | 修改图 |
+| -------------------------- | ---------------------------------- | ------ |
+| `propose_inference_edge`   | 提出独立候选推理边及证据问题       | 是     |
+| `get_inference_edge`       | 读取边、状态、租约和问题           | 否     |
+| `update_inference_edge`    | 更新描述、成本、优先级和候选边问题 | 是     |
+| `list_candidate_edges`     | 按 DFS/BFS/Priority 返回候选前沿   | 否     |
+| `claim_inference_edge`     | 领取一条边并获得执行上下文         | 是     |
+| `claim_inference_edges`    | 按策略批量领取多条边               | 是     |
+| `release_inference_edge`   | 释放租约，使边回到候选前沿         | 是     |
+| `answer_evidence_question` | 记录租约持有者对问题的回答         | 是     |
+| `complete_inference_edge`  | 使用上下文哈希完成边并检查环       | 是     |
+| `block_inference_edge`     | 以原因阻塞一条边                   | 是     |
 
 ### 上下文和审计
 
@@ -341,12 +343,13 @@ finish_reasoning_session（需要显式结束时）
 
 ## Web UI
 
-Web UI 是只读观察面，不直接访问 SQLite，也不替 Agent 执行推理。当前界面提供：
+Web UI 不直接访问 SQLite，所有写入都通过与 MCP 共用的 JSON bridge，并使用当前 `graphRevision` 做并发校验。当前界面提供：
 
 - 会话选择、目标状态、当前 `graphRevision` 和事件游标；
 - Cytoscape 图画布，按边状态显示候选、租约、完成、阻塞等关系；
 - 候选前沿列表，保持 Core 返回的确定性顺序；
 - 边检查器、顶点检查器和依赖范围切换；
+- 顶点标签和 JSON 载荷编辑；推理边描述、成本、优先级和 Candidate 取证问题编辑；
 - 与 MCP 共用的持久化 `V1`、`V2`… 顶点索引和 `E1`、`E2`… 推理边索引；画布把每个 `E` 直接标在它自己的箭头上；
 - 顶点检查器展示 `E1 ∧ E2 ... -> Vn` 公式、完成进度和组间的析取关系；
 - 上下文投影、遗漏实体和扩展句柄查看；
@@ -427,7 +430,7 @@ pnpm replay:bd1      # 使用内置 fixture 在内存中回放 DFS/BFS
 
 - 开发页面地址是 `http://127.0.0.1:5174`，不是 `5173`。
 - 确认后端 `8791` 正在运行；Vite 代理依赖该端口。
-- Web UI 可新建会话、编辑会话别名和标签，并在确认后删除整个 SQLite 会话图；MCP 仍可用于完整的推理建模和执行。
+- Web UI 可新建会话、编辑会话别名/标签、顶点和边的可编辑字段，并在确认后删除整个 SQLite 会话图；MCP 仍可用于完整的推理建模和执行。
 - 查看浏览器网络面板和 `data/logs/reasoner-server.log` 中的结构化错误码。
 
 ### 服务启动失败

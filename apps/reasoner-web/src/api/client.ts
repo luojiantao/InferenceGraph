@@ -6,9 +6,12 @@ import type {
   GetContextForEdgeOutput,
   GetContextForVertexOutput,
   GetReasoningContextOutput,
+  InferenceEdgeQuestionInput,
   ListReasoningSessionsOutput,
   SessionId,
+  UpdateInferenceEdgeOutput,
   UpdateReasoningSessionMetadataOutput,
+  UpdateVertexOutput,
   VertexId,
 } from '@reasoner/schema';
 
@@ -131,4 +134,30 @@ export const reasonerApi = {
       { sessionId, vertexId, policy: 'DependencySubgraphWithGlobalSummary' },
       signal,
     ),
+
+  updateVertex: (
+    input: {
+      readonly sessionId: SessionId;
+      readonly vertexId: VertexId;
+      readonly baseGraphRevision: GraphRevision;
+      readonly label?: string;
+      readonly payload?: Record<string, unknown>;
+    },
+    signal?: AbortSignal,
+  ): Promise<UpdateVertexOutput> =>
+    invokeTool('update_vertex', { ...input, agentId: WEB_AGENT_ID }, signal),
+
+  updateInferenceEdge: (
+    input: {
+      readonly sessionId: SessionId;
+      readonly edgeId: EdgeId;
+      readonly baseGraphRevision: GraphRevision;
+      readonly label?: string;
+      readonly cost?: number;
+      readonly priority?: number;
+      readonly evidenceQuestions?: readonly InferenceEdgeQuestionInput[];
+    },
+    signal?: AbortSignal,
+  ): Promise<UpdateInferenceEdgeOutput> =>
+    invokeTool('update_inference_edge', { ...input, agentId: WEB_AGENT_ID }, signal),
 };

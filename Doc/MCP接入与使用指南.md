@@ -8,7 +8,7 @@
 | ----------- | ---------------------------------------------------- |
 | MCP 端点    | `http://127.0.0.1:8791/mcp`                          |
 | 传输        | MCP Streamable HTTP；服务端开启 JSON 响应模式        |
-| 工具数量    | 23 个                                                |
+| 工具数量    | 25 个                                                |
 | 服务名/版本 | `inference-graph-reasoner` / `0.1.0`                 |
 | 默认监听    | 仅回环地址 `127.0.0.1`                               |
 | 鉴权        | 当前没有鉴权或 API Key                               |
@@ -86,7 +86,7 @@ curl http://127.0.0.1:8791/health
 正常返回类似：
 
 ```json
-{ "status": "ok", "tools": 23 }
+{ "status": "ok", "tools": 25 }
 ```
 
 ### 3.2 服务端环境变量
@@ -344,7 +344,7 @@ await transport.close();
 
 前沿排序是确定性的：DFS 优先深度、BFS 优先浅度、Priority 优先高 `priority`；相同条件最终按 `edgeId` 排序。
 
-## 8. 23 个 MCP 工具参考
+## 8. 25 个 MCP 工具参考
 
 ### 8.1 参数约定
 
@@ -366,13 +366,14 @@ await transport.close();
 
 #### 顶点工具
 
-| 工具                  | 变更图 | 输入                                                                                                          |
-| --------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `add_state_vertex`    | 是     | 通用写字段；`vertexId?`: ID；`label`: string 1–400；`payload?`: object，默认 `{}`；`dedupeKey?`: string 1–400 |
-| `add_evidence_vertex` | 是     | 与 `add_state_vertex` 完全相同；服务端将顶点 `kind` 设为 `Evidence`                                           |
-| `get_vertex`          | 否     | `sessionId`: ID；`vertexId`: ID                                                                               |
+| 工具                  | 变更图 | 输入                                                                                                                                                           |
+| --------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_state_vertex`    | 是     | 通用写字段；`vertexId?`: ID；`label`: string 1–400；`payload?`: object，默认 `{}`；`dedupeKey?`: string 1–400                                                  |
+| `add_evidence_vertex` | 是     | 与 `add_state_vertex` 完全相同；服务端将顶点 `kind` 设为 `Evidence`                                                                                            |
+| `get_vertex`          | 否     | `sessionId`: ID；`vertexId`: ID                                                                                                                                |
+| `update_vertex`       | 是     | 通用写字段；`vertexId`: ID；`label?`: string 1–400；`payload?`: object；至少提供一项。只更新标签/载荷，保留 `Vn`、类型和创建信息；相连存在 `Leased` 边时拒绝。 |
 
-写入顶点返回 `{graphRevision, lastEventSeq, vertex, deduplicated}`。使用相同去重键/内容重新提交时，`deduplicated=true`，当前实现不新增事件，并通过事务的 no-op 分支保持原 `graphRevision`。查询返回 `{vertex, incomingEdgeIds, outgoingEdgeIds}`。
+写入顶点返回 `{graphRevision, lastEventSeq, vertex, deduplicated}`。使用相同去重键/内容重新提交时，`deduplicated=true`，当前实现不新增事件，并通过事务的 no-op 分支保持原 `graphRevision`。查询返回 `{vertex, incomingEdgeIds, outgoingEdgeIds}`；`update_vertex` 返回 `{graphRevision, lastEventSeq, vertex}`，并写入 `VertexUpdated` 审计事件。
 
 #### 推理边与调度工具
 
@@ -380,6 +381,7 @@ await transport.close();
 | -------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `propose_inference_edge`   | 是     | 通用写字段；`edgeId?`: ID（仅展开为一条边时可用）；`sourceVertexIds`: 非空 ID 数组；`targetVertexIds`: 非空 ID 数组；`label`: string 1–400；`cost?`: 有限非负数，默认 `1`；`priority?`: 有限数，默认 `0`；`evidenceQuestions?`: 数组，默认 `[]`，元素 `{questionId?, prompt}`（prompt 1–2000）；`dedupeKey?`: string 1–400 |
 | `get_inference_edge`       | 否     | `sessionId`: ID；`edgeId`: ID                                                                                                                                                                                                                                                                                              |
+| `update_inference_edge`    | 是     | 通用写字段；`edgeId`: ID；`label?`: string 1–400；`cost?`: 有限非负数；`priority?`: 有限数；`evidenceQuestions?`: 完整问题列表（仅 Candidate）；至少提供一项。保留 `En`、来源/目标、`formulaId`、状态和租约；Leased 边拒绝。                                                                                               |
 | `list_candidate_edges`     | 否     | `sessionId`: ID；`strategy?`: enum；`limit?`: 正整数 ≤500，默认 `50`                                                                                                                                                                                                                                                       |
 | `claim_inference_edge`     | 是     | 通用写字段；`edgeId`: ID；`leaseSeconds?`: 正整数 ≤86400，实际不会超过 session budget                                                                                                                                                                                                                                      |
 | `claim_inference_edges`    | 是     | 通用写字段；`maxEdges?`: 正整数 ≤50，默认 `5`；`strategy?`: enum；`leaseSeconds?`: 正整数 ≤86400                                                                                                                                                                                                                           |
@@ -392,6 +394,7 @@ await transport.close();
 
 - `propose_inference_edge`：`{graphRevision, lastEventSeq, edge, edges, deduplicated}`；`edges` 是按输入来源 × 目标顺序的全部独立边，`edge` 是第一条，供单边客户端兼容使用。同一目标的一次多来源提议共享一个 `formulaId`，表示组内合取。
 - `get_inference_edge`：`{edge}`。
+- `update_inference_edge`：`{graphRevision, lastEventSeq, edge}`，并写入 `EdgeUpdated` 审计事件。
 - `list_candidate_edges`：`{edges, graphRevision}`。
 - 单边 claim：`{graphRevision, lastEventSeq, leaseId, edge, context}`。
 - 批量 claim：`{graphRevision, lastEventSeq, claims:[{leaseId, edge, context}]}`。
@@ -498,7 +501,7 @@ tail -f data/logs/reasoner-server.log | jq 'select(.errorCode)'
 
 ## 12. 版本与扩展
 
-工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 23 个工具。
+工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 25 个工具。
 
 如果需要在另一个 Node 进程中嵌入 MCP server，可依赖 `@reasoner/mcp` 的 `createReasonerMcpServer(service)`；该函数只创建 MCP server 和 controller，不创建存储或 HTTP listener。生产接入仍建议使用 `@reasoner/server`，让数据目录、生命周期和 session transport 由统一应用管理。
 

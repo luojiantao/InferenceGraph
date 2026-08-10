@@ -137,7 +137,26 @@ export const GetVertexOutputSchema = z.object({
   outgoingEdgeIds: z.array(EdgeIdSchema),
 });
 
-// --- 11. propose_inference_edge ---
+// --- 11. update_vertex ---
+/** Updates editable vertex content while preserving its Vn identity and kind. */
+export const UpdateVertexInputSchema = WriteCommandBase.extend({
+  vertexId: VertexIdSchema,
+  label: z.string().min(1).max(400).optional(),
+  payload: z.record(z.unknown()).optional(),
+}).refine((input) => input.label !== undefined || input.payload !== undefined, {
+  message: 'at least one editable vertex field is required',
+});
+export const UpdateVertexOutputSchema = RevisionAck.extend({
+  vertex: VertexSchema,
+});
+
+/** Input shape shared by edge proposal and manual edge editing. */
+export const InferenceEdgeQuestionInputSchema = z.object({
+  questionId: QuestionIdSchema.optional(),
+  prompt: z.string().min(1).max(2000),
+});
+
+// --- 12. propose_inference_edge ---
 export const ProposeInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema.optional(),
   /**
@@ -150,14 +169,7 @@ export const ProposeInferenceEdgeInputSchema = WriteCommandBase.extend({
   label: z.string().min(1).max(400),
   cost: z.number().finite().nonnegative().default(1),
   priority: z.number().finite().default(0),
-  evidenceQuestions: z
-    .array(
-      z.object({
-        questionId: QuestionIdSchema.optional(),
-        prompt: z.string().min(1).max(2000),
-      }),
-    )
-    .default([]),
+  evidenceQuestions: z.array(InferenceEdgeQuestionInputSchema).default([]),
   dedupeKey: z.string().min(1).max(400).optional(),
 });
 export const ProposeInferenceEdgeOutputSchema = RevisionAck.extend({
@@ -168,12 +180,35 @@ export const ProposeInferenceEdgeOutputSchema = RevisionAck.extend({
   deduplicated: z.boolean(),
 });
 
-// --- 12. get_inference_edge ---
+// --- 13. get_inference_edge ---
 export const GetInferenceEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
 });
 export const GetInferenceEdgeOutputSchema = z.object({ edge: InferenceEdgeSchema });
+
+// --- 14. update_inference_edge ---
+/**
+ * Updates edge presentation and scheduling attributes. Endpoints, formulaId,
+ * En, lifecycle state and lease are deliberately immutable through this tool.
+ */
+export const UpdateInferenceEdgeInputSchema = WriteCommandBase.extend({
+  edgeId: EdgeIdSchema,
+  label: z.string().min(1).max(400).optional(),
+  cost: z.number().finite().nonnegative().optional(),
+  priority: z.number().finite().optional(),
+  evidenceQuestions: z.array(InferenceEdgeQuestionInputSchema).optional(),
+}).refine(
+  (input) =>
+    input.label !== undefined ||
+    input.cost !== undefined ||
+    input.priority !== undefined ||
+    input.evidenceQuestions !== undefined,
+  { message: 'at least one editable edge field is required' },
+);
+export const UpdateInferenceEdgeOutputSchema = RevisionAck.extend({
+  edge: InferenceEdgeSchema,
+});
 
 // --- 13. list_candidate_edges ---
 export const ListCandidateEdgesInputSchema = z.object({
@@ -334,10 +369,15 @@ export type AddEvidenceVertexInput = z.infer<typeof AddEvidenceVertexInputSchema
 export type AddEvidenceVertexOutput = z.infer<typeof AddEvidenceVertexOutputSchema>;
 export type GetVertexInput = z.infer<typeof GetVertexInputSchema>;
 export type GetVertexOutput = z.infer<typeof GetVertexOutputSchema>;
+export type UpdateVertexInput = z.infer<typeof UpdateVertexInputSchema>;
+export type UpdateVertexOutput = z.infer<typeof UpdateVertexOutputSchema>;
+export type InferenceEdgeQuestionInput = z.infer<typeof InferenceEdgeQuestionInputSchema>;
 export type ProposeInferenceEdgeInput = z.infer<typeof ProposeInferenceEdgeInputSchema>;
 export type ProposeInferenceEdgeOutput = z.infer<typeof ProposeInferenceEdgeOutputSchema>;
 export type GetInferenceEdgeInput = z.infer<typeof GetInferenceEdgeInputSchema>;
 export type GetInferenceEdgeOutput = z.infer<typeof GetInferenceEdgeOutputSchema>;
+export type UpdateInferenceEdgeInput = z.infer<typeof UpdateInferenceEdgeInputSchema>;
+export type UpdateInferenceEdgeOutput = z.infer<typeof UpdateInferenceEdgeOutputSchema>;
 export type ListCandidateEdgesInput = z.infer<typeof ListCandidateEdgesInputSchema>;
 export type ListCandidateEdgesOutput = z.infer<typeof ListCandidateEdgesOutputSchema>;
 export type ClaimInferenceEdgeInput = z.infer<typeof ClaimInferenceEdgeInputSchema>;

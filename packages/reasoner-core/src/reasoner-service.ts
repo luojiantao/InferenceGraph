@@ -24,6 +24,7 @@ import {
   type EdgeId,
   type EdgeExecutionContext,
   type EdgeReferenceId,
+  type EvidenceQuestion,
   type FinishReasoningSessionInput,
   type FinishReasoningSessionOutput,
   type GetContextForEdgeInput,
@@ -46,6 +47,7 @@ import {
   type GraphRevision,
   type GraphSnapshot,
   type InferenceEdge,
+  type InferenceEdgeQuestionInput,
   type LeaseId,
   type ListCandidateEdgesInput,
   type ListCandidateEdgesOutput,
@@ -64,6 +66,10 @@ import {
   type SessionId,
   type UpdateReasoningSessionMetadataInput,
   type UpdateReasoningSessionMetadataOutput,
+  type UpdateInferenceEdgeInput,
+  type UpdateInferenceEdgeOutput,
+  type UpdateVertexInput,
+  type UpdateVertexOutput,
   type Vertex,
   type VertexReferenceId,
   type VertexExpansionContext,
@@ -86,7 +92,13 @@ import {
   validateGraphInvariants,
   type InvariantViolation,
 } from './graph-algorithms.js';
-import { expandedEdgeDedupeKey, inferenceFormulaId, vertexDedupeKey } from './dedup.js';
+import {
+  canonicalJson,
+  expandedEdgeDedupeKey,
+  inferenceFormulaId,
+  normalizeText,
+  vertexDedupeKey,
+} from './dedup.js';
 import { orderFrontier } from './search-strategy.js';
 import {
   checkLeaseHeld,
@@ -151,6 +163,69 @@ const isReservedReferenceId = (value: string, prefix: 'V' | 'E'): boolean =>
 
 const sameStringList = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
+
+/**
+ * Applies a complete question-list replacement while retaining answers for
+ * unchanged questions. Answered prompts cannot be removed or rewritten by a
+ * manual edit because that would silently change the evidence an Agent gave.
+ */
+const updateEvidenceQuestions = (
+  existing: readonly EvidenceQuestion[],
+  requested: readonly InferenceEdgeQuestionInput[],
+  ids: IdGenerator,
+): Result<readonly EvidenceQuestion[]> => {
+  const byId = new Map(existing.map((question) => [question.questionId, question]));
+  const byPrompt = new Map(existing.map((question) => [normalizeText(question.prompt), question]));
+  const seenIds = new Set<string>();
+  const seenPrompts = new Set<string>();
+  const next: EvidenceQuestion[] = [];
+
+  for (const request of requested) {
+    const normalizedPrompt = normalizeText(request.prompt);
+    if (seenPrompts.has(normalizedPrompt)) {
+      return err('InvalidInput', 'an edge cannot contain duplicate evidence question prompts', {
+        prompt: request.prompt,
+      });
+    }
+
+    const matched =
+      (request.questionId === undefined ? undefined : byId.get(request.questionId)) ??
+      byPrompt.get(normalizedPrompt);
+    const questionId = matched?.questionId ?? request.questionId ?? ids.newId('question');
+    if (seenIds.has(questionId)) {
+      return err('InvalidInput', 'an edge cannot contain duplicate evidence question ids', {
+        questionId,
+      });
+    }
+    if (matched?.answer !== undefined && matched.prompt !== request.prompt) {
+      return err(
+        'InvalidInput',
+        `answered evidence question ${matched.questionId} cannot be rewritten`,
+        { questionId: matched.questionId },
+      );
+    }
+
+    seenIds.add(questionId);
+    seenPrompts.add(normalizedPrompt);
+    next.push(
+      matched === undefined
+        ? { questionId: questionId as EvidenceQuestion['questionId'], prompt: request.prompt }
+        : { ...matched, prompt: request.prompt },
+    );
+  }
+
+  const removedAnswered = existing.find(
+    (question) => question.answer !== undefined && !seenIds.has(question.questionId),
+  );
+  if (removedAnswered !== undefined) {
+    return err(
+      'InvalidInput',
+      `answered evidence question ${removedAnswered.questionId} cannot be removed`,
+      { questionId: removedAnswered.questionId },
+    );
+  }
+  return ok(next);
+};
 
 interface EdgeEndpoints {
   readonly sourceVertexId: VertexId;
@@ -524,6 +599,86 @@ export class ReasonerService {
     });
   }
 
+  /** Manually updates a vertex label and/or payload without changing Vn or kind. */
+  async updateVertex(input: UpdateVertexInput): Promise<Result<UpdateVertexOutput>> {
+    let updated: Vertex | null = null;
+    let changed = false;
+
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot, now) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const vertex = snapshot.vertices.find((candidate) => candidate.vertexId === input.vertexId);
+        if (vertex === undefined) {
+          return err('VertexNotFound', `vertex ${input.vertexId} not found`, {
+            vertexId: input.vertexId,
+          });
+        }
+
+        const leasedRelation = snapshot.edges.find(
+          (edge) =>
+            edge.state === 'Leased' &&
+            (edge.sourceVertexIds.includes(input.vertexId) ||
+              edge.targetVertexIds.includes(input.vertexId)),
+        );
+        if (leasedRelation !== undefined) {
+          return err(
+            'InvalidInput',
+            `vertex ${input.vertexId} participates in leased edge ${leasedRelation.edgeId}; release it before editing`,
+            { vertexId: input.vertexId, edgeId: leasedRelation.edgeId },
+          );
+        }
+
+        const next: Vertex = {
+          ...vertex,
+          ...(input.label === undefined ? {} : { label: input.label }),
+          ...(input.payload === undefined ? {} : { payload: input.payload }),
+        };
+        const labelChanged = next.label !== vertex.label;
+        const payloadChanged = canonicalJson(next.payload) !== canonicalJson(vertex.payload);
+        if (!labelChanged && !payloadChanged) {
+          updated = vertex;
+          return ok<MutationDraft>({ events: [] });
+        }
+
+        changed = true;
+        updated = next;
+        return ok<MutationDraft>({
+          upsertVertices: [next],
+          events: [
+            {
+              kind: 'VertexUpdated',
+              actorAgentId: input.agentId,
+              vertexId: input.vertexId,
+              detail: {
+                fields: [
+                  ...(labelChanged ? ['label'] : []),
+                  ...(payloadChanged ? ['payload'] : []),
+                ],
+                editedAt: now,
+              },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+    if (updated === null) return err('StorageFailure', 'vertex update planner produced no vertex');
+
+    if (changed) await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    const persisted = outcome.value.snapshot.vertices.find(
+      (vertex) => vertex.vertexId === input.vertexId,
+    );
+    return ok({
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      vertex: persisted ?? updated,
+    });
+  }
+
   async proposeInferenceEdge(
     input: ProposeInferenceEdgeInput,
   ): Promise<Result<ProposeInferenceEdgeOutput>> {
@@ -722,6 +877,103 @@ export class ReasonerService {
     return edge === undefined
       ? err('EdgeNotFound', `edge ${input.edgeId} not found`, { edgeId: input.edgeId })
       : ok({ edge });
+  }
+
+  /**
+   * Manually updates edge presentation/scheduling attributes. The relation's
+   * endpoints, formula group, En reference and lifecycle state remain stable.
+   */
+  async updateInferenceEdge(
+    input: UpdateInferenceEdgeInput,
+  ): Promise<Result<UpdateInferenceEdgeOutput>> {
+    let updated: InferenceEdge | null = null;
+    let changed = false;
+
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot, now) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const edge = snapshot.edges.find((candidate) => candidate.edgeId === input.edgeId);
+        if (edge === undefined) {
+          return err('EdgeNotFound', `edge ${input.edgeId} not found`, { edgeId: input.edgeId });
+        }
+        if (edge.state === 'Leased') {
+          return err('InvalidInput', `edge ${input.edgeId} is leased; release it before editing`, {
+            edgeId: input.edgeId,
+          });
+        }
+        if (input.evidenceQuestions !== undefined && edge.state !== 'Candidate') {
+          return err(
+            'InvalidInput',
+            `evidence questions can only be edited while edge ${input.edgeId} is Candidate`,
+            { edgeId: input.edgeId, state: edge.state },
+          );
+        }
+
+        let nextQuestions = edge.evidenceQuestions;
+        if (input.evidenceQuestions !== undefined) {
+          const questionResult = updateEvidenceQuestions(
+            edge.evidenceQuestions,
+            input.evidenceQuestions,
+            this.deps.ids,
+          );
+          if (isErr(questionResult)) return questionResult;
+          nextQuestions = [...questionResult.value];
+        }
+
+        const next: InferenceEdge = {
+          ...edge,
+          ...(input.label === undefined ? {} : { label: input.label }),
+          ...(input.cost === undefined ? {} : { cost: input.cost }),
+          ...(input.priority === undefined ? {} : { priority: input.priority }),
+          ...(input.evidenceQuestions === undefined ? {} : { evidenceQuestions: nextQuestions }),
+        };
+        const labelChanged = next.label !== edge.label;
+        const costChanged = next.cost !== edge.cost;
+        const priorityChanged = next.priority !== edge.priority;
+        const questionsChanged =
+          canonicalJson(next.evidenceQuestions) !== canonicalJson(edge.evidenceQuestions);
+        if (!labelChanged && !costChanged && !priorityChanged && !questionsChanged) {
+          updated = edge;
+          return ok<MutationDraft>({ events: [] });
+        }
+
+        changed = true;
+        updated = next;
+        return ok<MutationDraft>({
+          upsertEdges: [next],
+          events: [
+            {
+              kind: 'EdgeUpdated',
+              actorAgentId: input.agentId,
+              edgeId: input.edgeId,
+              detail: {
+                fields: [
+                  ...(labelChanged ? ['label'] : []),
+                  ...(costChanged ? ['cost'] : []),
+                  ...(priorityChanged ? ['priority'] : []),
+                  ...(questionsChanged ? ['evidenceQuestions'] : []),
+                ],
+                editedAt: now,
+              },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+    if (updated === null) return err('StorageFailure', 'edge update planner produced no edge');
+
+    if (changed) await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    const persisted = outcome.value.snapshot.edges.find((edge) => edge.edgeId === input.edgeId);
+    return ok({
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      edge: persisted ?? updated,
+    });
   }
 
   async listCandidateEdges(

@@ -506,6 +506,34 @@ button:disabled {
   border-color: var(--focus);
   outline: none;
 }
+.editor-textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px;
+  color: var(--fg);
+  font:
+    12px/1.5 'Cascadia Code',
+    Consolas,
+    monospace;
+  background: #171a22;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.editor-textarea:focus {
+  border-color: var(--focus);
+  outline: none;
+}
+.editor-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.editor-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -630,7 +658,8 @@ button:disabled {
 .panel {
   border-bottom: 1px solid var(--line);
 }
-.panel > h2 {
+.panel > h2,
+.inspector-heading {
   margin: 0;
   padding: 10px 12px;
   font-size: 13px;
@@ -638,6 +667,20 @@ button:disabled {
   letter-spacing: 0.06em;
   color: var(--muted);
   background: #171a22;
+}
+.inspector-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inspector-heading h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .panel-body {
   padding: 10px 12px;
