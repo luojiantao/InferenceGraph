@@ -13,6 +13,7 @@ import {
   GetInferenceEdgeInputSchema,
   GetReasoningContextInputSchema,
   GetReasoningSessionInputSchema,
+  GetReasoningTextForVertexInputSchema,
   GetVertexInputSchema,
   ListCandidateEdgesInputSchema,
   ListReasoningSessionsInputSchema,
@@ -22,8 +23,14 @@ import {
   err,
   isErr,
   NULL_LOGGER,
+  ok,
+  resolveEdgeReference,
+  resolveVertexReference,
+  type EdgeId,
   type Logger,
   type Result,
+  type SessionId,
+  type VertexId,
 } from '@reasoner/schema';
 import type { ReasonerService } from '@reasoner/core';
 
@@ -43,6 +50,79 @@ export interface ReasonerToolDefinition<TSchema extends z.ZodTypeAny = z.ZodType
 }
 
 export type AnyReasonerTool = ReasonerToolDefinition<z.ZodTypeAny>;
+
+interface GraphReferenceInput {
+  readonly sessionId?: SessionId;
+  readonly vertexId?: VertexId;
+  readonly edgeId?: EdgeId;
+  readonly sourceVertexIds?: readonly VertexId[];
+  readonly targetVertexIds?: readonly VertexId[];
+}
+
+const VERTEX_REFERENCE_TOOLS = new Set([
+  'get_vertex',
+  'propose_inference_edge',
+  'get_context_for_vertex',
+  'get_reasoning_text_for_vertex',
+]);
+
+const EDGE_REFERENCE_TOOLS = new Set([
+  'get_inference_edge',
+  'claim_inference_edge',
+  'release_inference_edge',
+  'answer_evidence_question',
+  'complete_inference_edge',
+  'block_inference_edge',
+  'get_context_for_edge',
+]);
+
+/** Resolves public Vn/En references before a tool reaches the Core service. */
+const resolveGraphReferenceInput = async <T extends object>(
+  service: ReasonerService,
+  toolName: string,
+  input: T,
+): Promise<Result<T>> => {
+  if (!VERTEX_REFERENCE_TOOLS.has(toolName) && !EDGE_REFERENCE_TOOLS.has(toolName)) {
+    return ok(input);
+  }
+
+  const referenceInput = input as T & GraphReferenceInput;
+  if (referenceInput.sessionId === undefined) return ok(input);
+
+  const aliases = await service.getGraphAliases(referenceInput.sessionId);
+  if (isErr(aliases)) return aliases;
+
+  if (toolName === 'propose_inference_edge') {
+    const sourceVertexIds = referenceInput.sourceVertexIds;
+    const targetVertexIds = referenceInput.targetVertexIds;
+    if (sourceVertexIds === undefined || targetVertexIds === undefined) return ok(input);
+    return ok({
+      ...input,
+      sourceVertexIds: sourceVertexIds.map((vertexId) =>
+        resolveVertexReference(aliases.value, vertexId),
+      ),
+      targetVertexIds: targetVertexIds.map((vertexId) =>
+        resolveVertexReference(aliases.value, vertexId),
+      ),
+    } as T);
+  }
+
+  if (VERTEX_REFERENCE_TOOLS.has(toolName) && referenceInput.vertexId !== undefined) {
+    return ok({
+      ...input,
+      vertexId: resolveVertexReference(aliases.value, referenceInput.vertexId),
+    } as T);
+  }
+
+  if (EDGE_REFERENCE_TOOLS.has(toolName) && referenceInput.edgeId !== undefined) {
+    return ok({
+      ...input,
+      edgeId: resolveEdgeReference(aliases.value, referenceInput.edgeId),
+    } as T);
+  }
+
+  return ok(input);
+};
 
 /**
  * The complete tool surface. This array is the single source of truth for what
@@ -119,7 +199,7 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       name: 'propose_inference_edge',
       title: 'Propose inference edge',
       description:
-        'Proposes a candidate hyperedge from all premises to all conclusions, optionally carrying evidence questions. Questions are edge attributes, never separate vertices.',
+        'Expands every source/target pair into an independent candidate inference edge, each with its own En, state and evidence questions. Sources from one proposal share an AND formula for each target; separate formulae are alternative derivations. Questions remain edge attributes, never separate vertices.',
       mutating: true,
       inputSchema: ProposeInferenceEdgeInputSchema,
       handler: (input) => service.proposeInferenceEdge(input),
@@ -197,16 +277,25 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       name: 'get_context_for_vertex',
       title: 'Get context for vertex',
       description:
-        'Projection for deciding which edges to propose from a vertex: the vertex, its full necessary ancestor subgraph, evidence digests and a global summary.',
+        'Projection for deciding which edges to propose from a vertex: the vertex, its full necessary ancestor subgraph, evidence digests and a global summary. vertexId accepts a canonical id or session-local Vn reference.',
       mutating: false,
       inputSchema: GetContextForVertexInputSchema,
       handler: (input) => service.getContextForVertex(input),
     }),
     define({
+      name: 'get_reasoning_text_for_vertex',
+      title: 'Get reasoning text for vertex',
+      description:
+        'Renders a vertex dependency projection as Markdown reasoning text and Mermaid source, including the target formula and its completion progress. vertexId accepts a canonical id or session-local Vn reference; only recorded graph entities and their stored states are transcribed, with no invented conclusions.',
+      mutating: false,
+      inputSchema: GetReasoningTextForVertexInputSchema,
+      handler: (input) => service.getReasoningTextForVertex(input),
+    }),
+    define({
       name: 'get_context_for_edge',
       title: 'Get context for edge',
       description:
-        'Projection for executing one edge: its premises, conclusions, evidence questions and ancestors, plus the context hash required to complete it.',
+        'Projection for executing one edge: its premises, conclusions, evidence questions and ancestors, plus the context hash required to complete it. edgeId accepts a canonical id or session-local En reference.',
       mutating: false,
       inputSchema: GetContextForEdgeInputSchema,
       handler: (input) => service.getContextForEdge(input),
@@ -228,9 +317,10 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
  * InvalidInput error code rather than thrown, so protocol callers always get a
  * structured payload instead of a stack trace.
  */
-export const invokeReasonerTool = async (
-  tool: AnyReasonerTool,
+export const invokeReasonerTool = async <TSchema extends z.ZodTypeAny>(
+  tool: ReasonerToolDefinition<TSchema>,
   rawInput: unknown,
+  transformInput?: (input: z.output<TSchema>) => Promise<Result<z.output<TSchema>>>,
 ): Promise<Result<unknown>> => {
   const parsed = tool.inputSchema.safeParse(rawInput);
   if (!parsed.success) {
@@ -241,7 +331,8 @@ export const invokeReasonerTool = async (
       })),
     });
   }
-  return tool.handler(parsed.data);
+  const input = transformInput === undefined ? ok(parsed.data) : await transformInput(parsed.data);
+  return isErr(input) ? input : tool.handler(input.value);
 };
 
 export class ReasonerToolController {
@@ -249,6 +340,7 @@ export class ReasonerToolController {
   private readonly log: Logger;
 
   constructor(
+    private readonly service: ReasonerService,
     private readonly tools: readonly AnyReasonerTool[],
     logger?: Logger,
   ) {
@@ -272,7 +364,9 @@ export class ReasonerToolController {
     }
 
     const startedAt = process.hrtime.bigint();
-    const result = await invokeReasonerTool(tool, rawInput);
+    const result = await invokeReasonerTool(tool, rawInput, (input) =>
+      resolveGraphReferenceInput(this.service, tool.name, input),
+    );
     const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1e3) / 1e3;
 
     if (isErr(result)) {
@@ -288,4 +382,5 @@ export class ReasonerToolController {
 export const createReasonerToolController = (
   service: ReasonerService,
   options: { logger?: Logger } = {},
-): ReasonerToolController => new ReasonerToolController(buildReasonerTools(service), options.logger);
+): ReasonerToolController =>
+  new ReasonerToolController(service, buildReasonerTools(service), options.logger);

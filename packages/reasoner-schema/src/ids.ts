@@ -15,6 +15,18 @@ const identifier = (label: string) =>
 export const SessionIdSchema = identifier('sessionId').brand<'SessionId'>();
 export const VertexIdSchema = identifier('vertexId').brand<'VertexId'>();
 export const EdgeIdSchema = identifier('edgeId').brand<'EdgeId'>();
+/** Opaque grouping id for the independent edges that form one vertex formula. */
+export const FormulaIdSchema = identifier('formulaId').brand<'FormulaId'>();
+/** Persisted, session-local display/reference id assigned when an entity is created. */
+export const VertexReferenceIdSchema = z
+  .string()
+  .regex(/^V[1-9][0-9]*$/, 'must be V1, V2, ...')
+  .brand<'VertexReferenceId'>();
+/** Persisted, session-local display/reference id assigned when an entity is created. */
+export const EdgeReferenceIdSchema = z
+  .string()
+  .regex(/^E[1-9][0-9]*$/, 'must be E1, E2, ...')
+  .brand<'EdgeReferenceId'>();
 export const QuestionIdSchema = identifier('questionId').brand<'QuestionId'>();
 export const LeaseIdSchema = identifier('leaseId').brand<'LeaseId'>();
 export const AgentIdSchema = identifier('agentId').brand<'AgentId'>();
@@ -22,6 +34,9 @@ export const AgentIdSchema = identifier('agentId').brand<'AgentId'>();
 export type SessionId = z.infer<typeof SessionIdSchema>;
 export type VertexId = z.infer<typeof VertexIdSchema>;
 export type EdgeId = z.infer<typeof EdgeIdSchema>;
+export type FormulaId = z.infer<typeof FormulaIdSchema>;
+export type VertexReferenceId = z.infer<typeof VertexReferenceIdSchema>;
+export type EdgeReferenceId = z.infer<typeof EdgeReferenceIdSchema>;
 export type QuestionId = z.infer<typeof QuestionIdSchema>;
 export type LeaseId = z.infer<typeof LeaseIdSchema>;
 export type AgentId = z.infer<typeof AgentIdSchema>;

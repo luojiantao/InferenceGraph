@@ -2,12 +2,15 @@ import { z } from 'zod';
 import {
   AgentIdSchema,
   EdgeIdSchema,
+  EdgeReferenceIdSchema,
+  FormulaIdSchema,
   GraphRevisionSchema,
   IsoTimestampSchema,
   LeaseIdSchema,
   QuestionIdSchema,
   Sha256Schema,
   VertexIdSchema,
+  VertexReferenceIdSchema,
 } from './ids.js';
 
 /**
@@ -20,6 +23,8 @@ export type VertexKind = z.infer<typeof VertexKindSchema>;
 
 export const VertexSchema = z.object({
   vertexId: VertexIdSchema,
+  /** Session-local, immutable Vn reference allocated at creation time. */
+  referenceId: VertexReferenceIdSchema,
   kind: VertexKindSchema,
   label: z.string().min(1).max(400),
   /** Opaque agent-supplied payload. The Core stores and returns it verbatim. */
@@ -77,16 +82,24 @@ export const EdgeLeaseSchema = z.object({
 export type EdgeLease = z.infer<typeof EdgeLeaseSchema>;
 
 /**
- * A directed labelled hyperedge: `sourceVertexIds` are all premises (AND
- * semantics — every one must hold), `targetVertexIds` are all conclusions
- * produced together when the edge fires. Both sides are sets, so a merge
- * inference and a multi-conclusion inference are first-class, not degraded
- * into several pairwise edges.
+ * A directed labelled inference edge. Every persisted edge connects exactly
+ * one source vertex to exactly one target vertex, so its state, evidence,
+ * lease and completion record are never shared with another relation.
+ *
+ * The array field names are retained for wire compatibility. Batch proposal
+ * input is expanded into independent binary edges before persistence.
  */
 export const InferenceEdgeSchema = z.object({
   edgeId: EdgeIdSchema,
-  sourceVertexIds: z.array(VertexIdSchema).min(1),
-  targetVertexIds: z.array(VertexIdSchema).min(1),
+  /** Session-local, immutable En reference allocated at creation time. */
+  referenceId: EdgeReferenceIdSchema,
+  /**
+   * Physical edges in the same formula are conjunction operands. Formula
+   * groups targeting the same vertex are alternatives (disjunction).
+   */
+  formulaId: FormulaIdSchema,
+  sourceVertexIds: z.array(VertexIdSchema).length(1),
+  targetVertexIds: z.array(VertexIdSchema).length(1),
   label: z.string().min(1).max(400),
   state: EdgeStateSchema,
   /** Lower cost is preferred by Priority search and minimal hyperpath. */

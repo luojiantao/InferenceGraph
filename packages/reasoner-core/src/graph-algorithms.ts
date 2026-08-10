@@ -51,7 +51,10 @@ export const supportedSet = (
 };
 
 export interface HyperpathStep {
+  /** Representative physical edge retained for compatibility with existing callers. */
   readonly edgeId: EdgeId;
+  /** All physical edges comprising this formula step. */
+  readonly edgeIds: readonly EdgeId[];
   readonly sourceVertexIds: readonly VertexId[];
   readonly targetVertexIds: readonly VertexId[];
   readonly cost: number;
@@ -128,6 +131,7 @@ export const minimalHyperpath = (
     for (const sourceId of edge.sourceVertexIds) emit(sourceId);
     steps.push({
       edgeId: edge.edgeId,
+      edgeIds: edge.edgeIds ?? [edge.edgeId],
       sourceVertexIds: edge.sourceVertexIds,
       targetVertexIds: edge.targetVertexIds,
       cost: edge.cost,

@@ -5,6 +5,7 @@ import type {
   Vertex,
   VertexId,
 } from '@reasoner/schema';
+import { buildInferenceFormulaGroups } from '@reasoner/schema';
 import type { DirectedIncidenceGraph, HyperedgeView } from './graph-theory.js';
 
 /** Pre-computed adjacency over a snapshot; rebuilt per read, never cached across revisions. */
@@ -50,6 +51,7 @@ export const buildGraphIndex = (snapshot: GraphSnapshot): GraphIndex => {
 
 const toHyperedgeView = (edge: InferenceEdge): HyperedgeView => ({
   edgeId: edge.edgeId,
+  edgeIds: [edge.edgeId],
   sourceVertexIds: edge.sourceVertexIds,
   targetVertexIds: edge.targetVertexIds,
   cost: edge.cost,
@@ -72,15 +74,41 @@ export const toCompletedIncidenceGraph = (index: GraphIndex): DirectedIncidenceG
     .map(toHyperedgeView),
 });
 
-/** Vertices needing no derivation: Evidence, plus any vertex with no incoming edge. */
+/**
+ * Inferential view of completed formulae. A formula fires only when every one
+ * of its direct edges is Completed; edge grouping never creates a stored or
+ * rendered intermediate node.
+ */
+export const toCompletedFormulaIncidenceGraph = (index: GraphIndex): DirectedIncidenceGraph => ({
+  vertexIds: index.snapshot.vertices.map((vertex) => vertex.vertexId),
+  hyperedges: buildInferenceFormulaGroups(index.snapshot.edges).flatMap((formula) => {
+    if (!formula.edges.every((edge) => edge.state === 'Completed')) return [];
+    const representativeEdgeId = formula.edgeIds[0];
+    const firstEdge = formula.edges[0];
+    if (representativeEdgeId === undefined || firstEdge === undefined) return [];
+    return [
+      {
+        edgeId: representativeEdgeId,
+        edgeIds: formula.edgeIds,
+        sourceVertexIds: formula.sourceVertexIds,
+        targetVertexIds: [formula.targetVertexId],
+        // Batch expansion copies the rule cost to every component edge.
+        cost: firstEdge.cost,
+      },
+    ];
+  }),
+});
+
+/** Vertices needing no derivation: Evidence, plus any vertex with no incoming formula. */
 export const baseVertexIds = (index: GraphIndex): ReadonlySet<VertexId> => {
   const base = new Set<VertexId>();
+  const formulaTargets = new Set(
+    buildInferenceFormulaGroups(index.snapshot.edges).map((formula) => formula.targetVertexId),
+  );
   for (const vertex of index.snapshot.vertices) {
-    const incoming = index.incomingEdgeIds.get(vertex.vertexId) ?? [];
-    const derivable = incoming.some(
-      (edgeId) => index.edgeById.get(edgeId)?.state === 'Completed',
-    );
-    if (vertex.kind === 'Evidence' || !derivable) base.add(vertex.vertexId);
+    if (vertex.kind === 'Evidence' || !formulaTargets.has(vertex.vertexId)) {
+      base.add(vertex.vertexId);
+    }
   }
   return base;
 };

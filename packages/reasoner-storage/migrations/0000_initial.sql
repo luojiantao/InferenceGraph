@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS reasoning_sessions (
 CREATE TABLE IF NOT EXISTS vertices (
   session_id          TEXT NOT NULL REFERENCES reasoning_sessions(session_id) ON DELETE CASCADE,
   vertex_id           TEXT NOT NULL,
+  reference_id        TEXT NOT NULL,
   kind                TEXT NOT NULL,
   label               TEXT NOT NULL,
   payload_json        TEXT NOT NULL,
@@ -44,6 +45,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_vertices_dedupe
 CREATE TABLE IF NOT EXISTS inference_edges (
   session_id          TEXT NOT NULL REFERENCES reasoning_sessions(session_id) ON DELETE CASCADE,
   edge_id             TEXT NOT NULL,
+  reference_id        TEXT NOT NULL,
+  -- Groups direct edges into one AND formula for a target vertex.
+  formula_id          TEXT NOT NULL,
   label               TEXT NOT NULL,
   state               TEXT NOT NULL,
   cost                REAL NOT NULL,
@@ -63,7 +67,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_edges_dedupe
 
 CREATE INDEX IF NOT EXISTS ix_edges_state ON inference_edges (session_id, state);
 
--- Hyperedge premises. Normalised so a multi-source edge is not degraded.
+-- Source endpoint for each independent directed inference edge.
 CREATE TABLE IF NOT EXISTS edge_sources (
   session_id TEXT NOT NULL,
   edge_id    TEXT NOT NULL,
@@ -73,7 +77,7 @@ CREATE TABLE IF NOT EXISTS edge_sources (
   FOREIGN KEY (session_id, edge_id) REFERENCES inference_edges(session_id, edge_id) ON DELETE CASCADE
 );
 
--- Hyperedge conclusions. Separate table so multi-target edges round-trip intact.
+-- Target endpoint for each independent directed inference edge.
 CREATE TABLE IF NOT EXISTS edge_targets (
   session_id TEXT NOT NULL,
   edge_id    TEXT NOT NULL,

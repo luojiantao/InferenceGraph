@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import {
   GraphEventSchema,
   InferenceEdgeSchema,
@@ -135,9 +135,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
     return this.parseSession(row);
   }
 
-  async listSessions(
-    options: ListSessionsOptions,
-  ): Promise<Result<readonly ReasoningSession[]>> {
+  async listSessions(options: ListSessionsOptions): Promise<Result<readonly ReasoningSession[]>> {
     const sql = options.includeFinished
       ? 'SELECT * FROM reasoning_sessions ORDER BY created_at DESC LIMIT ?'
       : `SELECT * FROM reasoning_sessions
@@ -457,6 +455,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
     for (const row of vertexRows) {
       const parsed = VertexSchema.safeParse({
         vertexId: asString(row['vertex_id']),
+        referenceId: asString(row['reference_id']),
         kind: asString(row['kind']),
         label: asString(row['label']),
         payload: JSON.parse(asString(row['payload_json'])) as Record<string, unknown>,
@@ -521,6 +520,8 @@ export class SqliteReasonerRepository implements ReasonerRepository {
 
       const parsed = InferenceEdgeSchema.safeParse({
         edgeId,
+        referenceId: asString(row['reference_id']),
+        formulaId: asString(row['formula_id']),
         sourceVertexIds: sources,
         targetVertexIds: targets,
         label: asString(row['label']),
@@ -567,13 +568,14 @@ export class SqliteReasonerRepository implements ReasonerRepository {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO vertices (
-           session_id, vertex_id, kind, label, payload_json, dedupe_key,
+           session_id, vertex_id, reference_id, kind, label, payload_json, dedupe_key,
            created_by_agent, created_at, created_at_revision
-         ) VALUES (?,?,?,?,?,?,?,?,?)`,
+         ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         sessionId,
         vertex.vertexId,
+        vertex.referenceId,
         vertex.kind,
         vertex.label,
         JSON.stringify(vertex.payload),
@@ -584,21 +586,20 @@ export class SqliteReasonerRepository implements ReasonerRepository {
       );
   }
 
-  private upsertEdge(
-    sessionId: SessionId,
-    edge: InferenceEdge,
-    revision: GraphRevision,
-  ): void {
+  private upsertEdge(sessionId: SessionId, edge: InferenceEdge, revision: GraphRevision): void {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO inference_edges (
-           session_id, edge_id, label, state, cost, priority, conclusion, blocked_reason,
-           dedupe_key, proposed_by_agent, created_at, created_at_revision, updated_at_revision
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           session_id, edge_id, reference_id, formula_id, label, state, cost, priority, conclusion,
+           blocked_reason, dedupe_key, proposed_by_agent, created_at, created_at_revision,
+           updated_at_revision
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         sessionId,
         edge.edgeId,
+        edge.referenceId,
+        edge.formulaId,
         edge.label,
         edge.state,
         edge.cost,

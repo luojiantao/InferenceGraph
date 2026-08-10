@@ -19,9 +19,8 @@ import { orderFrontier } from './search-strategy.js';
  * Walks Completed incoming edges backwards from a vertex, collecting the whole
  * necessary ancestor set.
  *
- * AND semantics: for every edge taken, *all* of its premises are collected. A
- * single-arc walk would silently drop co-premises of a merge inference, which
- * is exactly the failure mode the projection must not have.
+ * Every persisted relation has one source and one target. Traversing incoming
+ * completed edges therefore collects each upstream dependency independently.
  */
 export const collectAncestors = (
   index: GraphIndex,
@@ -171,8 +170,8 @@ export const projectVertexContext = (
  * Edge-local material that defines a claim. The completion hash is computed over
  * this and nothing else, so unrelated graph growth by other agents cannot
  * invalidate an in-flight claim (that would deadlock parallel work). Only
- * changes to *this* edge's premises, conclusions, label, cost or question
- * prompts do.
+ * changes to *this* edge's formula membership, premises, conclusions, label,
+ * cost or question prompts do.
  *
  * Question *answers* are deliberately excluded: only the lease holder can write
  * them, so they are the holder's own work product rather than an input that
@@ -181,6 +180,7 @@ export const projectVertexContext = (
  */
 const edgeIdentityMaterial = (edge: InferenceEdge, sourceVertices: readonly Vertex[]) => ({
   edgeId: edge.edgeId,
+  formulaId: edge.formulaId,
   label: edge.label,
   cost: edge.cost,
   priority: edge.priority,

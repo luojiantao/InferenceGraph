@@ -54,6 +54,16 @@ export const VertexExpansionContextSchema = z.object({
 });
 export type VertexExpansionContext = z.infer<typeof VertexExpansionContextSchema>;
 
+/** Human-readable rendering of a vertex dependency projection. */
+export const VertexReasoningTextSchema = z.object({
+  context: VertexExpansionContextSchema,
+  /** Markdown narrative. It includes the Mermaid source in a fenced code block. */
+  reasoningText: z.string().min(1),
+  /** Raw Mermaid flowchart source for callers that render it separately. */
+  mermaid: z.string().min(1),
+});
+export type VertexReasoningText = z.infer<typeof VertexReasoningTextSchema>;
+
 /** Payload returned by get_context_for_edge and archived at claim time. */
 export const EdgeExecutionContextSchema = z.object({
   sessionId: SessionIdSchema,

@@ -1,5 +1,7 @@
 export * from './ids.js';
 export * from './graph.js';
+export * from './graph-aliases.js';
+export * from './inference-formulas.js';
 export * from './session.js';
 export * from './context.js';
 export * from './errors.js';

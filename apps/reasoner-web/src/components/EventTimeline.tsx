@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { useGraphStore } from '../state/graph-store.js';
+import { buildGraphAliases } from './graph-aliases.js';
 
 /**
  * Immutable audit trail ordered by eventSeq. Gap detection is also keyed on
@@ -8,6 +9,7 @@ import { useGraphStore } from '../state/graph-store.js';
  */
 export const EventTimeline = (): ReactElement => {
   const events = useGraphStore((state) => state.events);
+  const view = useGraphStore((state) => state.view);
   const selectEdge = useGraphStore((state) => state.selectEdge);
   const selectVertex = useGraphStore((state) => state.selectVertex);
 
@@ -16,11 +18,16 @@ export const EventTimeline = (): ReactElement => {
   }
 
   const ordered = [...events].reverse();
+  const aliases = view === null ? undefined : buildGraphAliases(view.snapshot);
   const gaps: number[] = [];
   for (let index = 1; index < events.length; index += 1) {
     const previous = events[index - 1];
     const current = events[index];
-    if (previous !== undefined && current !== undefined && current.eventSeq !== previous.eventSeq + 1) {
+    if (
+      previous !== undefined &&
+      current !== undefined &&
+      current.eventSeq !== previous.eventSeq + 1
+    ) {
       gaps.push(previous.eventSeq);
     }
   }
@@ -33,7 +40,8 @@ export const EventTimeline = (): ReactElement => {
 
       {gaps.length > 0 && (
         <p className="warn small" role="status">
-          检测到 {gaps.length} 处事件序号缺口（上次连续到 #{gaps[gaps.length - 1]}）。可能有事件页尚未拉取。
+          检测到 {gaps.length} 处事件序号缺口（上次连续到 #{gaps[gaps.length - 1]}
+          ）。可能有事件页尚未拉取。
         </p>
       )}
 
@@ -52,12 +60,12 @@ export const EventTimeline = (): ReactElement => {
                   <span className="small">
                     {edgeId !== undefined && (
                       <button type="button" className="link" onClick={() => selectEdge(edgeId)}>
-                        边
+                        边 {aliases?.edgeById.get(edgeId) ?? edgeId}
                       </button>
                     )}
                     {vertexId !== undefined && (
                       <button type="button" className="link" onClick={() => selectVertex(vertexId)}>
-                        顶点
+                        顶点 {aliases?.vertexById.get(vertexId) ?? vertexId}
                       </button>
                     )}
                   </span>

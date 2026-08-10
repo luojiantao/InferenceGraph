@@ -43,7 +43,7 @@ export const FrontierPanel = (): ReactElement => {
                   <span className="rank">{index + 1}</span>
                   <span className="row-main">
                     <span className="row-title">
-                      {aliases.edgeGroupById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
+                      {aliases.edgeById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
                     </span>
                     <span className="muted small">
                       cost {edge.cost} · priority {edge.priority}

@@ -142,11 +142,13 @@ describe('storage: restart recovery', () => {
     expect(after.snapshot.vertices.map((v) => v.vertexId).sort()).toEqual(
       before.snapshot.vertices.map((v) => v.vertexId).sort(),
     );
+    expect(after.snapshot.vertices.map((v) => v.referenceId).sort()).toEqual(['V1', 'V2', 'V3']);
     expect(after.frontierEdgeIds).toEqual(before.frontierEdgeIds);
     expect(after.events.map((e) => e.eventSeq)).toEqual(before.events.map((e) => e.eventSeq));
 
-    // Hyperedge structure and edge-attribute questions survive the round trip.
+    // Independent edge structure and edge-attribute questions survive the round trip.
     const restored = after.snapshot.edges.find((e) => e.edgeId === edge.edge.edgeId);
+    expect(restored?.referenceId).toBe('E1');
     expect(restored?.sourceVertexIds).toEqual([premise.vertex.vertexId]);
     expect(restored?.targetVertexIds).toEqual([conclusion.vertex.vertexId]);
     expect(restored?.cost).toBe(2);
@@ -163,11 +165,12 @@ describe('storage: restart recovery', () => {
       payload: {},
     });
     expect(continued.ok).toBe(true);
+    if (continued.ok) expect(continued.value.vertex.referenceId).toBe('V4');
 
     second.close();
   });
 
-  it('round-trips a multi-source multi-target hyperedge', async () => {
+  it('persists one AND formula per target while keeping every arrow independent across restart', async () => {
     const dataDir = newDataDir();
     const storage = createStorage({ dataDir, clock: new FixedClock(), enableAudit: false });
     const service = new ReasonerService({
@@ -180,7 +183,7 @@ describe('storage: restart recovery', () => {
     const created = unwrap(
       await service.createReasoningSession({
         agentId: AGENT,
-        goalLabel: 'hyperedge goal',
+        goalLabel: 'independent edge goal',
         goalPayload: {},
         strategy: 'DFS',
         projectionPolicy: 'DependencySubgraphWithGlobalSummary',
@@ -205,14 +208,14 @@ describe('storage: restart recovery', () => {
     }
     const [s1, s2, t1, t2] = ids as [string, string, string, string];
 
-    const edge = unwrap(
+    const proposed = unwrap(
       await service.proposeInferenceEdge({
         sessionId,
         baseGraphRevision: revision,
         agentId: AGENT,
         sourceVertexIds: [s1, s2] as never,
         targetVertexIds: [t1, t2] as never,
-        label: 'two premises yield two conclusions',
+        label: 'both sources jointly support each target',
         cost: 1,
         priority: 0,
         evidenceQuestions: [],
@@ -229,13 +232,52 @@ describe('storage: restart recovery', () => {
       audit: reopened.audit,
     });
 
+    expect(proposed.edge.referenceId).toBe('E1');
+    expect(proposed.edges.map((edge) => edge.referenceId)).toEqual(['E1', 'E2', 'E3', 'E4']);
+    expect(
+      proposed.edges.map((edge) => [edge.sourceVertexIds[0], edge.targetVertexIds[0]]),
+    ).toEqual([
+      [s1, t1],
+      [s1, t2],
+      [s2, t1],
+      [s2, t2],
+    ]);
+    expect(
+      proposed.edges.every(
+        (edge) => edge.sourceVertexIds.length === 1 && edge.targetVertexIds.length === 1,
+      ),
+    ).toBe(true);
+    expect(proposed.edges[0]?.formulaId).toBe(proposed.edges[2]?.formulaId);
+    expect(proposed.edges[1]?.formulaId).toBe(proposed.edges[3]?.formulaId);
+    expect(proposed.edges[0]?.formulaId).not.toBe(proposed.edges[1]?.formulaId);
+
     const restored = unwrap(
-      await reopenedService.getInferenceEdge({ sessionId, edgeId: edge.edge.edgeId }),
+      await reopenedService.getReasoningContext({
+        sessionId,
+        afterEventSeq: 0,
+        eventLimit: 100,
+      }),
     );
 
-    // Neither side collapsed to a single vertex.
-    expect(restored.edge.sourceVertexIds).toEqual([s1, s2]);
-    expect(restored.edge.targetVertexIds).toEqual([t1, t2]);
+    expect(restored.snapshot.edges.map((edge) => edge.referenceId).sort()).toEqual([
+      'E1',
+      'E2',
+      'E3',
+      'E4',
+    ]);
+    expect(
+      restored.snapshot.edges.map((edge) => [edge.sourceVertexIds[0], edge.targetVertexIds[0]]),
+    ).toEqual(expect.arrayContaining([[s1, t1], [s1, t2], [s2, t1], [s2, t2]]));
+    const byTarget = new Map<string, Set<string>>();
+    for (const edge of restored.snapshot.edges) {
+      const target = edge.targetVertexIds[0];
+      if (target === undefined) continue;
+      const formulaIds = byTarget.get(target) ?? new Set<string>();
+      formulaIds.add(edge.formulaId);
+      byTarget.set(target, formulaIds);
+    }
+    expect(byTarget.get(t1)?.size).toBe(1);
+    expect(byTarget.get(t2)?.size).toBe(1);
 
     reopened.close();
   });

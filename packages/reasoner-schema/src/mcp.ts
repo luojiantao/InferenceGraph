@@ -24,7 +24,11 @@ import {
   SearchStrategySchema,
   SessionBudgetSchema,
 } from './session.js';
-import { EdgeExecutionContextSchema, VertexExpansionContextSchema } from './context.js';
+import {
+  EdgeExecutionContextSchema,
+  VertexExpansionContextSchema,
+  VertexReasoningTextSchema,
+} from './context.js';
 
 /** Every write command carries caller identity plus the revision it observed. */
 const WriteCommandBase = z.object({
@@ -107,6 +111,11 @@ export const GetVertexOutputSchema = z.object({
 // --- 8. propose_inference_edge ---
 export const ProposeInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema.optional(),
+  /**
+   * Batch endpoints. The service expands their Cartesian product into
+   * independent one-source/one-target inference edges in input order. For
+   * each target, all source edges from one proposal form a conjunction.
+   */
   sourceVertexIds: z.array(VertexIdSchema).min(1),
   targetVertexIds: z.array(VertexIdSchema).min(1),
   label: z.string().min(1).max(400),
@@ -123,7 +132,10 @@ export const ProposeInferenceEdgeInputSchema = WriteCommandBase.extend({
   dedupeKey: z.string().min(1).max(400).optional(),
 });
 export const ProposeInferenceEdgeOutputSchema = RevisionAck.extend({
+  /** First expanded edge, retained for clients that submit one pair. */
   edge: InferenceEdgeSchema,
+  /** Every independent edge produced or reused by this proposal, in input order. */
+  edges: z.array(InferenceEdgeSchema).min(1),
   deduplicated: z.boolean(),
 });
 
@@ -229,7 +241,11 @@ export const GetContextForVertexOutputSchema = z.object({
   context: VertexExpansionContextSchema,
 });
 
-// --- 18. get_context_for_edge ---
+// --- 18. get_reasoning_text_for_vertex ---
+export const GetReasoningTextForVertexInputSchema = GetContextForVertexInputSchema;
+export const GetReasoningTextForVertexOutputSchema = VertexReasoningTextSchema;
+
+// --- 19. get_context_for_edge ---
 export const GetContextForEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
@@ -240,10 +256,10 @@ export const GetContextForEdgeOutputSchema = z.object({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 19. get_reasoning_context ---
+// --- 20. get_reasoning_context ---
 /**
  * Session-level read-only overview. It deliberately returns neither a single
- * vertex payload nor a single edge payload; use tools 17/18 for those.
+ * vertex payload nor a single edge payload; use the entity context tools for those.
  */
 export const GetReasoningContextInputSchema = z.object({
   sessionId: SessionIdSchema,
@@ -295,6 +311,8 @@ export type BlockInferenceEdgeInput = z.infer<typeof BlockInferenceEdgeInputSche
 export type BlockInferenceEdgeOutput = z.infer<typeof BlockInferenceEdgeOutputSchema>;
 export type GetContextForVertexInput = z.infer<typeof GetContextForVertexInputSchema>;
 export type GetContextForVertexOutput = z.infer<typeof GetContextForVertexOutputSchema>;
+export type GetReasoningTextForVertexInput = z.infer<typeof GetReasoningTextForVertexInputSchema>;
+export type GetReasoningTextForVertexOutput = z.infer<typeof GetReasoningTextForVertexOutputSchema>;
 export type GetContextForEdgeInput = z.infer<typeof GetContextForEdgeInputSchema>;
 export type GetContextForEdgeOutput = z.infer<typeof GetContextForEdgeOutputSchema>;
 export type GetReasoningContextInput = z.infer<typeof GetReasoningContextInputSchema>;

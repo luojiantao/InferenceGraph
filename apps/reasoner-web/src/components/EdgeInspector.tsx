@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import type { VertexId } from '@reasoner/schema';
 import { useGraphStore } from '../state/graph-store.js';
 import { buildGraphAliases } from './graph-aliases.js';
+import { buildIncomingInferenceFormulas } from './inference-formulas.js';
 
 const STATE_LABELS: Record<string, string> = {
   Candidate: '候选',
@@ -48,12 +49,21 @@ export const EdgeInspector = (): ReactElement => {
   const aliases = buildGraphAliases(view.snapshot);
   const edgeAlias =
     (selectedArcId === null ? undefined : aliases.arcById.get(selectedArcId)) ??
-    aliases.edgeGroupById.get(edge.edgeId) ??
+    aliases.edgeById.get(edge.edgeId) ??
     edge.edgeId;
   const vertexLabel = (vertexId: VertexId): string =>
     `${aliases.vertexById.get(vertexId) ?? vertexId} · ${
       view.snapshot.vertices.find((vertex) => vertex.vertexId === vertexId)?.label ?? vertexId
     }`;
+  const targetVertexId = edge.targetVertexIds[0];
+  const formula =
+    targetVertexId === undefined
+      ? undefined
+      : buildIncomingInferenceFormulas(view.snapshot, targetVertexId).find((candidate) =>
+          candidate.edgeIds.includes(edge.edgeId),
+        );
+  const formulaComplete =
+    formula !== undefined && formula.completedEdgeCount === formula.requiredEdgeCount;
 
   return (
     <section className="panel" aria-labelledby="edge-heading">
@@ -65,6 +75,20 @@ export const EdgeInspector = (): ReactElement => {
           详情
         </button>
       </div>
+
+      {formula !== undefined && (
+        <div className="vertex-reasoning">
+          <h3>所属节点公式</h3>
+          <code className="formula-expression">{formula.expression}</code>
+          <p className="muted small">
+            {formula.requiredEdgeCount === 1
+              ? '该边完成后即可满足此公式。'
+              : formulaComplete
+                ? '该公式的全部条件已完成。'
+                : `该公式要求全部 ${formula.requiredEdgeCount} 个条件完成；当前 ${formula.completedEdgeCount}/${formula.requiredEdgeCount}。`}
+          </p>
+        </div>
+      )}
 
       <div className="edge-evidence">
         <h3>
@@ -156,7 +180,7 @@ export const EdgeInspector = (): ReactElement => {
             )}
           </dl>
 
-          <h3>来源顶点（AND：全部前提需满足）</h3>
+          <h3>来源顶点</h3>
           <ul className="link-list">
             {edge.sourceVertexIds.map((vertexId) => (
               <li key={vertexId}>

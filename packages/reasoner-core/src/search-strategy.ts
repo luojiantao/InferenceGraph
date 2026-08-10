@@ -1,5 +1,11 @@
-import type { EdgeId, InferenceEdge, SearchStrategy, VertexId } from '@reasoner/schema';
-import type { GraphIndex } from './graph-index.js';
+import {
+  buildInferenceFormulaGroups,
+  type EdgeId,
+  type InferenceEdge,
+  type SearchStrategy,
+  type VertexId,
+} from '@reasoner/schema';
+import { baseVertexIds, type GraphIndex } from './graph-index.js';
 
 export interface FrontierEntry {
   readonly edgeId: EdgeId;
@@ -11,38 +17,28 @@ export interface FrontierEntry {
 }
 
 /**
- * Depth of a vertex from the session's root vertices, over Completed edges only.
- * A vertex reachable by several routes takes its shallowest depth.
+ * Depth of a vertex from root vertices, over fully completed formulae only.
+ * A formula cannot contribute depth until every one of its direct operands is
+ * complete, so a partial E1/E2/E3 group never makes its target look derived.
  */
 const computeDepths = (index: GraphIndex): ReadonlyMap<VertexId, number> => {
   const depth = new Map<VertexId, number>();
-  const queue: VertexId[] = [];
+  for (const vertexId of baseVertexIds(index)) depth.set(vertexId, 0);
 
-  for (const vertex of index.snapshot.vertices) {
-    const incoming = (index.incomingEdgeIds.get(vertex.vertexId) ?? []).filter(
-      (edgeId) => index.edgeById.get(edgeId)?.state === 'Completed',
-    );
-    if (incoming.length === 0) {
-      depth.set(vertex.vertexId, 0);
-      queue.push(vertex.vertexId);
-    }
-  }
-  queue.sort();
-
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const current = queue[cursor];
-    if (current === undefined) continue;
-    const currentDepth = depth.get(current) ?? 0;
-    const outgoing = index.outgoingEdgeIds.get(current) ?? [];
-    for (const edgeId of outgoing) {
-      const edge = index.edgeById.get(edgeId);
-      if (edge === undefined || edge.state !== 'Completed') continue;
-      for (const targetId of edge.targetVertexIds) {
-        const existing = depth.get(targetId);
-        if (existing === undefined || currentDepth + 1 < existing) {
-          depth.set(targetId, currentDepth + 1);
-          queue.push(targetId);
-        }
+  const completedFormulae = buildInferenceFormulaGroups(index.snapshot.edges).filter((formula) =>
+    formula.edges.every((edge) => edge.state === 'Completed'),
+  );
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const formula of completedFormulae) {
+      const sourceDepths = formula.sourceVertexIds.map((sourceId) => depth.get(sourceId));
+      if (sourceDepths.some((value) => value === undefined)) continue;
+      const candidate = Math.max(...(sourceDepths as number[]), 0) + 1;
+      const existing = depth.get(formula.targetVertexId);
+      if (existing === undefined || candidate < existing) {
+        depth.set(formula.targetVertexId, candidate);
+        changed = true;
       }
     }
   }

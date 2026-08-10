@@ -1,11 +1,11 @@
 import type { EdgeId, VertexId } from '@reasoner/schema';
 
 /**
- * Directed incidence (bipartite) representation of the labelled hypergraph.
+ * Directed incidence (bipartite) representation used by structural algorithms.
  *
- * A hyperedge with sources {a,b} and target c is stored as incidence arcs
- * a->E, b->E, E->c. Every algorithm below walks these arcs; none of them
- * collapses a hyperedge into pairwise vertex edges.
+ * Persisted inference edges are binary source->target relations. The temporary
+ * relation element used here is an algorithm-internal device for cycle and
+ * topological checks; it is never stored as a vertex or rendered in the UI.
  */
 export interface GraphArc {
   readonly from: GraphElement;
@@ -17,7 +17,10 @@ export type GraphElement =
   | { readonly kind: 'edge'; readonly id: EdgeId };
 
 export interface HyperedgeView {
+  /** One representative physical edge; used only as an internal incidence id. */
   readonly edgeId: EdgeId;
+  /** Every physical edge that must complete for this formula to fire. */
+  readonly edgeIds?: readonly EdgeId[];
   readonly sourceVertexIds: readonly VertexId[];
   readonly targetVertexIds: readonly VertexId[];
   readonly cost: number;

@@ -6,6 +6,7 @@ export * from './graph-algorithms.js';
 export * from './graph-index.js';
 export * from './search-strategy.js';
 export * from './context-projector.js';
+export * from './reasoning-context-renderer.js';
 export * from './goal-evaluator.js';
 export * from './lease-coordinator.js';
 export * from './reasoner-service.js';

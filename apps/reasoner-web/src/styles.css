@@ -157,6 +157,15 @@ button:disabled {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.formula-expression {
+  display: block;
+  padding: 8px 10px;
+  color: var(--fg);
+  background: #20242e;
+  border: 1px solid var(--line);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 .edge-primary {
   display: flex;

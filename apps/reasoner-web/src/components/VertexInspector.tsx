@@ -61,20 +61,38 @@ export const VertexInspector = (): ReactElement => {
         {incomingFormulas.length === 0 ? (
           <p className="muted small">无入边推理。</p>
         ) : (
-          <ol className="inference-formula-list">
-            {incomingFormulas.map((formula) => (
-              <li key={formula.edgeId}>
-                <button
-                  type="button"
-                  className="inference-formula"
-                  aria-label={`查看推理边 ${formula.edgeId}`}
-                  onClick={() => selectEdge(formula.edgeId)}
-                >
-                  <code>{formula.expression}</code>
-                </button>
-              </li>
-            ))}
-          </ol>
+          <>
+            <p className="muted small">
+              {incomingFormulas.length === 1
+                ? '该公式中的全部条件完成后，才能推出当前顶点。'
+                : '每个公式组内的全部条件完成后成立；任一公式组成立即可推出当前顶点。'}
+            </p>
+            <ol className="inference-formula-list">
+              {incomingFormulas.map((formula) => {
+                const firstEdgeId = formula.edgeIds[0];
+                const complete = formula.completedEdgeCount === formula.requiredEdgeCount;
+                return (
+                  <li key={formula.formulaId}>
+                    <button
+                      type="button"
+                      className="inference-formula"
+                      aria-label={`查看推理公式 ${formula.expression}`}
+                      onClick={() => {
+                        if (firstEdgeId !== undefined) selectEdge(firstEdgeId);
+                      }}
+                    >
+                      <code>{formula.expression}</code>
+                    </button>
+                    <span className={`chip state-${complete ? 'Completed' : 'Candidate'}`}>
+                      {complete
+                        ? '条件已全部完成'
+                        : `条件完成 ${formula.completedEdgeCount}/${formula.requiredEdgeCount}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
         )}
       </div>
 
@@ -106,7 +124,7 @@ export const VertexInspector = (): ReactElement => {
           {outgoing.map((edge) => (
             <li key={edge.edgeId}>
               <button type="button" className="link" onClick={() => selectEdge(edge.edgeId)}>
-                {aliases.edgeGroupById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
+                {aliases.edgeById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
               </button>{' '}
               <span className={`chip state-${edge.state}`}>{edge.state}</span>
             </li>

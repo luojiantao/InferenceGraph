@@ -42,7 +42,7 @@ export const ParallelBranchPanel = (): ReactElement => {
                         className="link"
                         onClick={() => selectEdge(edge.edgeId)}
                       >
-                        {aliases.edgeGroupById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
+                        {aliases.edgeById.get(edge.edgeId) ?? edge.edgeId} · {edge.label}
                       </button>
                       {edge.lease !== undefined && (
                         <span className="muted small"> · 到期 {edge.lease.expiresAt}</span>

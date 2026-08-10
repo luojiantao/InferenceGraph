@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { FormulaId } from '@reasoner/schema';
 
 /**
  * Canonical JSON: object keys sorted recursively, undefined dropped. Two values
@@ -59,5 +60,42 @@ export const edgeDedupeKey = (
   const targets = [...targetVertexIds].sort().join('|');
   return `d:${sources}=>${targets}:${normalizeText(label)}`;
 };
+
+/**
+ * A caller-supplied key used for a batch proposal must still identify each
+ * independent source->target relation. Hashing keeps the persisted key short
+ * even when the caller key and opaque ids are long.
+ */
+export const expandedEdgeDedupeKey = (
+  sourceVertexId: string,
+  targetVertexId: string,
+  label: string,
+  explicit: string | undefined,
+  expandsMultipleEdges: boolean,
+): string => {
+  if (explicit === undefined || !expandsMultipleEdges) {
+    return edgeDedupeKey([sourceVertexId], [targetVertexId], label, explicit);
+  }
+  return `k:${sha256Hex(
+    canonicalJson({ explicit, sourceVertexId, targetVertexId }),
+  )}`;
+};
+
+/**
+ * Stable identity for one target's AND formula. Physical edges retain their
+ * own identities; this value only preserves the formula they jointly express.
+ */
+export const inferenceFormulaId = (
+  sourceVertexIds: readonly string[],
+  targetVertexId: string,
+  label: string,
+  explicit: string | undefined,
+): FormulaId =>
+  `formula:${hashCanonical({
+    sourceVertexIds: [...new Set(sourceVertexIds)].sort(),
+    targetVertexId,
+    label: normalizeText(label),
+    explicit: explicit ?? null,
+  })}` as FormulaId;
 
 export const evidenceQuestionDedupeKey = (prompt: string): string => normalizeText(prompt);

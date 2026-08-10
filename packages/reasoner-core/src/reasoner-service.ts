@@ -1,4 +1,5 @@
 import {
+  buildGraphAliases,
   err,
   isErr,
   NULL_LOGGER,
@@ -19,6 +20,8 @@ import {
   type CreateReasoningSessionInput,
   type CreateReasoningSessionOutput,
   type EdgeId,
+  type EdgeExecutionContext,
+  type EdgeReferenceId,
   type FinishReasoningSessionInput,
   type FinishReasoningSessionOutput,
   type GetContextForEdgeInput,
@@ -31,8 +34,11 @@ import {
   type GetReasoningContextOutput,
   type GetReasoningSessionInput,
   type GetReasoningSessionOutput,
+  type GetReasoningTextForVertexInput,
+  type GetReasoningTextForVertexOutput,
   type GetVertexInput,
   type GetVertexOutput,
+  type GraphAliases,
   type GraphRevision,
   type GraphSnapshot,
   type InferenceEdge,
@@ -44,22 +50,37 @@ import {
   type Logger,
   type ProposeInferenceEdgeInput,
   type ProposeInferenceEdgeOutput,
+  type ProjectionPolicy,
   type QuestionId,
   type ReasoningSession,
   type ReleaseInferenceEdgeInput,
   type ReleaseInferenceEdgeOutput,
   type Result,
+  type SearchStrategy,
   type SessionId,
   type Vertex,
+  type VertexReferenceId,
+  type VertexExpansionContext,
   type VertexId,
   type AnswerEvidenceQuestionInput,
   type AnswerEvidenceQuestionOutput,
   TERMINAL_GOAL_STATES,
 } from '@reasoner/schema';
-import type { AuditWriter, Clock, GraphEventDraft, IdGenerator, MutationDraft, ReasonerRepository } from './ports.js';
+import type {
+  AuditWriter,
+  Clock,
+  GraphEventDraft,
+  IdGenerator,
+  MutationDraft,
+  ReasonerRepository,
+} from './ports.js';
 import { buildGraphIndex, toCompletedIncidenceGraph } from './graph-index.js';
-import { checkCycleOnComplete, validateGraphInvariants, type InvariantViolation } from './graph-algorithms.js';
-import { edgeDedupeKey, vertexDedupeKey } from './dedup.js';
+import {
+  checkCycleOnComplete,
+  validateGraphInvariants,
+  type InvariantViolation,
+} from './graph-algorithms.js';
+import { expandedEdgeDedupeKey, inferenceFormulaId, vertexDedupeKey } from './dedup.js';
 import { orderFrontier } from './search-strategy.js';
 import {
   checkLeaseHeld,
@@ -75,7 +96,8 @@ import {
   projectEdgeContext,
   projectVertexContext,
 } from './context-projector.js';
-import { assessGoal, exceedsBudget } from './goal-evaluator.js';
+import { renderVertexReasoningContext } from './reasoning-context-renderer.js';
+import { assessGoal } from './goal-evaluator.js';
 
 /** Synthetic agent identifier for recovery-time structural checks. */
 const RECOVERY_ACTOR = 'system-recovery' as AgentId;
@@ -109,6 +131,37 @@ const assertActive = (session: ReasoningSession): Result<ReasoningSession> =>
       })
     : ok(session);
 
+const nextReferenceOrdinal = (referenceIds: readonly string[]): number =>
+  referenceIds.reduce((largest, referenceId) => {
+    const ordinal = Number(referenceId.slice(1));
+    return Number.isSafeInteger(ordinal) && ordinal > largest ? ordinal : largest;
+  }, 0);
+
+const nextVertexReferenceId = (vertices: readonly Vertex[]): VertexReferenceId =>
+  `V${nextReferenceOrdinal(vertices.map((vertex) => vertex.referenceId)) + 1}` as VertexReferenceId;
+
+const isReservedReferenceId = (value: string, prefix: 'V' | 'E'): boolean =>
+  new RegExp(`^${prefix}[1-9][0-9]*$`).test(value);
+
+interface EdgeEndpoints {
+  readonly sourceVertexId: VertexId;
+  readonly targetVertexId: VertexId;
+}
+
+/** Preserves caller order while preventing duplicate arrows in one proposal. */
+const expandEdgeEndpoints = (
+  sourceVertexIds: readonly VertexId[],
+  targetVertexIds: readonly VertexId[],
+): readonly EdgeEndpoints[] => {
+  const sources = [...new Set(sourceVertexIds)];
+  const targets = [...new Set(targetVertexIds)];
+  const endpoints: EdgeEndpoints[] = [];
+  for (const sourceVertexId of sources) {
+    for (const targetVertexId of targets) endpoints.push({ sourceVertexId, targetVertexId });
+  }
+  return endpoints;
+};
+
 /**
  * Application service behind every MCP tool. All graph mutation flows through
  * `repository.mutate`, whose planner runs inside the write transaction — so
@@ -131,6 +184,7 @@ export class ReasonerService {
 
     const goalVertex: Vertex = {
       vertexId: goalVertexId,
+      referenceId: 'V1' as VertexReferenceId,
       kind: 'Goal',
       label: input.goalLabel,
       payload: input.goalPayload,
@@ -162,7 +216,11 @@ export class ReasonerService {
       session,
       goalVertex,
       events: [
-        { kind: 'SessionCreated', actorAgentId: input.agentId, detail: { goalLabel: input.goalLabel } },
+        {
+          kind: 'SessionCreated',
+          actorAgentId: input.agentId,
+          detail: { goalLabel: input.goalLabel },
+        },
         { kind: 'VertexAdded', actorAgentId: input.agentId, vertexId: goalVertexId },
       ],
     });
@@ -177,6 +235,12 @@ export class ReasonerService {
   ): Promise<Result<GetReasoningSessionOutput>> {
     const session = await this.deps.repository.getSession(input.sessionId);
     return isErr(session) ? session : ok({ session: session.value });
+  }
+
+  /** Returns the authoritative session-local Vn/En reference map. */
+  async getGraphAliases(sessionId: SessionId): Promise<Result<GraphAliases>> {
+    const snapshot = await this.deps.repository.getSnapshot(sessionId);
+    return isErr(snapshot) ? snapshot : ok(buildGraphAliases(snapshot.value));
   }
 
   async listReasoningSessions(
@@ -250,9 +314,7 @@ export class ReasonerService {
     return this.addVertex(input, 'State');
   }
 
-  async addEvidenceVertex(
-    input: AddEvidenceVertexInput,
-  ): Promise<Result<AddEvidenceVertexOutput>> {
+  async addEvidenceVertex(input: AddEvidenceVertexInput): Promise<Result<AddEvidenceVertexOutput>> {
     return this.addVertex(input, 'Evidence');
   }
 
@@ -279,6 +341,16 @@ export class ReasonerService {
           return ok<MutationDraft>({ events: [] });
         }
 
+        if (input.vertexId !== undefined && isReservedReferenceId(input.vertexId, 'V')) {
+          return err(
+            'InvalidInput',
+            `${input.vertexId} is reserved for the session vertex reference`,
+            {
+              vertexId: input.vertexId,
+            },
+          );
+        }
+
         const vertexId = (input.vertexId ?? this.deps.ids.newId('vertex')) as VertexId;
         if (snapshot.vertices.some((vertex) => vertex.vertexId === vertexId)) {
           return err('DuplicateEntity', `vertex ${vertexId} already exists`, { vertexId });
@@ -286,6 +358,7 @@ export class ReasonerService {
 
         const vertex: Vertex = {
           vertexId,
+          referenceId: nextVertexReferenceId(snapshot.vertices),
           kind,
           label: input.label,
           payload: input.payload,
@@ -336,7 +409,7 @@ export class ReasonerService {
   async proposeInferenceEdge(
     input: ProposeInferenceEdgeInput,
   ): Promise<Result<ProposeInferenceEdgeOutput>> {
-    let resolved: InferenceEdge | null = null;
+    let resolved: readonly InferenceEdge[] = [];
     let deduplicated = false;
 
     const outcome = await this.deps.repository.mutate(
@@ -346,88 +419,186 @@ export class ReasonerService {
         const active = assertActive(snapshot.session);
         if (isErr(active)) return active;
 
+        const endpoints = expandEdgeEndpoints(input.sourceVertexIds, input.targetVertexIds);
+        if (endpoints.length === 0) {
+          return err('InvalidInput', 'at least one source and target vertex are required');
+        }
+
         const index = buildGraphIndex(snapshot);
-        for (const sourceId of input.sourceVertexIds) {
+        for (const sourceId of new Set(input.sourceVertexIds)) {
           if (!index.vertexById.has(sourceId)) {
             return err('VertexNotFound', `source vertex ${sourceId} not found`, {
               vertexId: sourceId,
             });
           }
         }
-        for (const targetId of input.targetVertexIds) {
+        for (const targetId of new Set(input.targetVertexIds)) {
           if (!index.vertexById.has(targetId)) {
             return err('VertexNotFound', `target vertex ${targetId} not found`, {
               vertexId: targetId,
             });
           }
-          if (input.sourceVertexIds.includes(targetId)) {
-            return err('CycleDetected', 'an edge may not list its own target as a premise', {
-              targetVertexId: targetId,
+        }
+        for (const { sourceVertexId, targetVertexId } of endpoints) {
+          if (sourceVertexId === targetVertexId) {
+            return err('CycleDetected', 'an inference edge cannot target its own source vertex', {
+              sourceVertexId,
+              targetVertexId,
             });
           }
         }
 
-        const dedupeKey = edgeDedupeKey(
-          input.sourceVertexIds,
-          input.targetVertexIds,
-          input.label,
-          input.dedupeKey,
-        );
-        const existing = snapshot.edges.find((edge) => edge.dedupeKey === dedupeKey);
-        if (existing !== undefined) {
-          resolved = existing;
-          deduplicated = true;
-          return ok<MutationDraft>({ events: [] });
+        if (input.edgeId !== undefined && endpoints.length > 1) {
+          return err(
+            'InvalidInput',
+            'edgeId can only be supplied when a proposal expands to exactly one inference edge',
+            { edgeId: input.edgeId, expandedEdgeCount: endpoints.length },
+          );
         }
 
-        if (exceedsBudget(snapshot)) {
-          return err('BudgetExceeded', `session reached maxEdges ${snapshot.session.budget.maxEdges}`, {
-            maxEdges: snapshot.session.budget.maxEdges,
+        if (input.edgeId !== undefined && isReservedReferenceId(input.edgeId, 'E')) {
+          return err('InvalidInput', `${input.edgeId} is reserved for the session edge reference`, {
+            edgeId: input.edgeId,
           });
         }
 
-        const edgeId = (input.edgeId ?? this.deps.ids.newId('edge')) as EdgeId;
-        const edge: InferenceEdge = {
-          edgeId,
-          sourceVertexIds: input.sourceVertexIds,
-          targetVertexIds: input.targetVertexIds,
-          label: input.label,
-          state: 'Candidate',
-          cost: input.cost,
-          priority: input.priority,
-          evidenceQuestions: input.evidenceQuestions.map((question) => ({
-            questionId: (question.questionId ?? this.deps.ids.newId('question')) as QuestionId,
-            prompt: question.prompt,
-          })),
-          dedupeKey,
-          proposedByAgentId: input.agentId,
-          createdAt: now,
-          createdAtRevision: snapshot.graphRevision,
-          updatedAtRevision: snapshot.graphRevision,
-        };
-        resolved = edge;
+        const expandsMultipleEdges = endpoints.length > 1;
+        const existingByDedupeKey = new Map(
+          snapshot.edges
+            .filter((edge) => edge.dedupeKey !== undefined)
+            .map((edge) => [edge.dedupeKey as string, edge]),
+        );
+        const candidates = endpoints.map((endpoint) => ({
+          endpoints: endpoint,
+          formulaId: inferenceFormulaId(
+            input.sourceVertexIds,
+            endpoint.targetVertexId,
+            input.label,
+            input.dedupeKey,
+          ),
+          dedupeKey: expandedEdgeDedupeKey(
+            endpoint.sourceVertexId,
+            endpoint.targetVertexId,
+            input.label,
+            input.dedupeKey,
+            expandsMultipleEdges,
+          ),
+        }));
+        const formulaConflict = candidates.find((candidate) => {
+          const existing = existingByDedupeKey.get(candidate.dedupeKey);
+          return existing !== undefined && existing.formulaId !== candidate.formulaId;
+        });
+        if (formulaConflict !== undefined) {
+          const existing = existingByDedupeKey.get(formulaConflict.dedupeKey);
+          return err(
+            'InvalidInput',
+            'an existing direct edge belongs to a different inference formula; use a distinct dedupeKey for the new formula',
+            {
+              sourceVertexId: formulaConflict.endpoints.sourceVertexId,
+              targetVertexId: formulaConflict.endpoints.targetVertexId,
+              existingFormulaId: existing?.formulaId,
+              requestedFormulaId: formulaConflict.formulaId,
+            },
+          );
+        }
+        const pending = candidates.filter(
+          (candidate) => !existingByDedupeKey.has(candidate.dedupeKey),
+        );
+
+        if (snapshot.edges.length + pending.length > snapshot.session.budget.maxEdges) {
+          return err(
+            'BudgetExceeded',
+            `session reached maxEdges ${snapshot.session.budget.maxEdges}`,
+            {
+              maxEdges: snapshot.session.budget.maxEdges,
+              requestedNewEdges: pending.length,
+            },
+          );
+        }
+
+        if (
+          input.edgeId !== undefined &&
+          pending.length > 0 &&
+          snapshot.edges.some((edge) => edge.edgeId === input.edgeId)
+        ) {
+          return err('DuplicateEntity', `edge ${input.edgeId} already exists`, {
+            edgeId: input.edgeId,
+          });
+        }
+
+        const created: InferenceEdge[] = [];
+        const occupiedEdgeIds = new Set(snapshot.edges.map((edge) => edge.edgeId));
+        let referenceOrdinal = nextReferenceOrdinal(snapshot.edges.map((edge) => edge.referenceId));
+        for (const [pendingIndex, entry] of pending.entries()) {
+          const edgeId = (
+            pendingIndex === 0 && input.edgeId !== undefined
+              ? input.edgeId
+              : this.deps.ids.newId('edge')
+          ) as EdgeId;
+          if (occupiedEdgeIds.has(edgeId)) {
+            return err('DuplicateEntity', `edge ${edgeId} already exists`, { edgeId });
+          }
+          occupiedEdgeIds.add(edgeId);
+          referenceOrdinal += 1;
+          const edge: InferenceEdge = {
+            edgeId,
+            referenceId: `E${referenceOrdinal}` as EdgeReferenceId,
+            formulaId: entry.formulaId,
+            sourceVertexIds: [entry.endpoints.sourceVertexId],
+            targetVertexIds: [entry.endpoints.targetVertexId],
+            label: input.label,
+            state: 'Candidate',
+            cost: input.cost,
+            priority: input.priority,
+            evidenceQuestions: input.evidenceQuestions.map((question) => ({
+              questionId: (question.questionId ?? this.deps.ids.newId('question')) as QuestionId,
+              prompt: question.prompt,
+            })),
+            dedupeKey: entry.dedupeKey,
+            proposedByAgentId: input.agentId,
+            createdAt: now,
+            createdAtRevision: snapshot.graphRevision,
+            updatedAtRevision: snapshot.graphRevision,
+          };
+          created.push(edge);
+        }
+
+        const createdByDedupeKey = new Map(
+          created.map((edge) => [edge.dedupeKey as string, edge]),
+        );
+        resolved = candidates.flatMap((candidate) => {
+          const edge =
+            existingByDedupeKey.get(candidate.dedupeKey) ??
+            createdByDedupeKey.get(candidate.dedupeKey);
+          return edge === undefined ? [] : [edge];
+        });
+        deduplicated = created.length === 0;
 
         return ok<MutationDraft>({
-          upsertEdges: [edge],
-          events: [{ kind: 'EdgeProposed', actorAgentId: input.agentId, edgeId }],
+          upsertEdges: created,
+          events: created.map((edge) => ({
+            kind: 'EdgeProposed' as const,
+            actorAgentId: input.agentId,
+            edgeId: edge.edgeId,
+          })),
         });
       },
     );
     if (isErr(outcome)) return outcome;
-    if (resolved === null) return err('StorageFailure', 'edge planner did not produce an edge');
+    const firstEdge = resolved[0];
+    if (firstEdge === undefined) return err('StorageFailure', 'edge planner did not produce an edge');
 
     await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
     return ok({
       graphRevision: outcome.value.graphRevision,
       lastEventSeq: outcome.value.lastEventSeq,
-      edge: resolved,
+      edge: firstEdge,
+      edges: [...resolved],
       deduplicated,
     });
   }
 
-  async getInferenceEdge(
-    input: GetInferenceEdgeInput,
-  ): Promise<Result<GetInferenceEdgeOutput>> {
+  async getInferenceEdge(input: GetInferenceEdgeInput): Promise<Result<GetInferenceEdgeOutput>> {
     const snapshot = await this.deps.repository.getSnapshot(input.sessionId);
     if (isErr(snapshot)) return snapshot;
     const edge = snapshot.value.edges.find((candidate) => candidate.edgeId === input.edgeId);
@@ -507,7 +678,11 @@ export class ReasonerService {
     leaseSeconds: number | undefined,
     selector:
       | { mode: 'explicit'; edgeId: EdgeId }
-      | { mode: 'strategy'; maxEdges: number; strategy?: import('@reasoner/schema').SearchStrategy },
+      | {
+          mode: 'strategy';
+          maxEdges: number;
+          strategy?: SearchStrategy;
+        },
   ): Promise<Result<ClaimInferenceEdgesOutput>> {
     const claimedEdgeIds: EdgeId[] = [];
     const leaseByEdge = new Map<EdgeId, LeaseId>();
@@ -702,9 +877,13 @@ export class ReasonerService {
           (candidate) => candidate.questionId === input.questionId,
         );
         if (question === undefined) {
-          return err('QuestionNotFound', `question ${input.questionId} not on edge ${input.edgeId}`, {
-            questionId: input.questionId,
-          });
+          return err(
+            'QuestionNotFound',
+            `question ${input.questionId} not on edge ${input.edgeId}`,
+            {
+              questionId: input.questionId,
+            },
+          );
         }
 
         const next: InferenceEdge = {
@@ -931,9 +1110,13 @@ export class ReasonerService {
           return err('EdgeNotFound', `edge ${input.edgeId} not found`, { edgeId: input.edgeId });
         }
         if (edge.state !== 'Candidate' && edge.state !== 'Leased') {
-          return err('InvalidInput', `edge ${input.edgeId} is ${edge.state} and cannot be blocked`, {
-            state: edge.state,
-          });
+          return err(
+            'InvalidInput',
+            `edge ${input.edgeId} is ${edge.state} and cannot be blocked`,
+            {
+              state: edge.state,
+            },
+          );
         }
         if (edge.state === 'Leased') {
           if (input.leaseId === undefined) {
@@ -988,33 +1171,30 @@ export class ReasonerService {
     const context = projectVertexContext(snapshot.value, input.vertexId, policy);
     if (isErr(context)) return context;
 
-    // Audit-only write: no revision bump, no GraphEvent.
-    await this.deps.repository.saveContextProjection({
-      projectionId: this.deps.ids.newId('projection'),
-      sessionId: input.sessionId,
-      subjectKind: 'Vertex',
-      subjectId: input.vertexId,
-      policy,
-      graphRevision: snapshot.value.graphRevision,
-      snapshotHash: snapshot.value.snapshotHash,
-      contextHash: context.value.contextHash,
-      includedVertexIds: [
-        context.value.currentVertex.vertexId,
-        ...context.value.ancestorVertices.map((vertex) => vertex.vertexId),
-      ],
-      includedEdgeIds: context.value.ancestorEdges.map((edge) => edge.edgeId),
-      omittedVertexIds: context.value.omittedVertexIds,
-      omittedEdgeIds: context.value.omittedEdgeIds,
-      expansionHandles: context.value.expansionHandles,
-      createdAt: this.deps.clock.now(),
-    });
+    await this.archiveVertexProjection(snapshot.value, input.vertexId, policy, context.value);
 
     return ok({ context: context.value });
   }
 
-  async getContextForEdge(
-    input: GetContextForEdgeInput,
-  ): Promise<Result<GetContextForEdgeOutput>> {
+  /** Renders the same audited vertex projection as Markdown reasoning text and Mermaid. */
+  async getReasoningTextForVertex(
+    input: GetReasoningTextForVertexInput,
+  ): Promise<Result<GetReasoningTextForVertexOutput>> {
+    const snapshot = await this.deps.repository.getSnapshot(input.sessionId);
+    if (isErr(snapshot)) return snapshot;
+
+    const policy = input.policy ?? snapshot.value.session.projectionPolicy;
+    const context = projectVertexContext(snapshot.value, input.vertexId, policy);
+    if (isErr(context)) return context;
+
+    await this.archiveVertexProjection(snapshot.value, input.vertexId, policy, context.value);
+    return ok({
+      context: context.value,
+      ...renderVertexReasoningContext(context.value, buildGraphAliases(snapshot.value)),
+    });
+  }
+
+  async getContextForEdge(input: GetContextForEdgeInput): Promise<Result<GetContextForEdgeOutput>> {
     const snapshot = await this.deps.repository.getSnapshot(input.sessionId);
     if (isErr(snapshot)) return snapshot;
 
@@ -1064,7 +1244,7 @@ export class ReasonerService {
   private async archiveEdgeProjection(
     snapshot: GraphSnapshot,
     edgeId: EdgeId,
-    context: import('@reasoner/schema').EdgeExecutionContext,
+    context: EdgeExecutionContext,
   ): Promise<void> {
     await this.deps.repository.saveContextProjection({
       projectionId: this.deps.ids.newId('projection'),
@@ -1081,6 +1261,34 @@ export class ReasonerService {
         ...context.ancestorVertices.map((vertex) => vertex.vertexId),
       ],
       includedEdgeIds: [edgeId, ...context.ancestorEdges.map((edge) => edge.edgeId)],
+      omittedVertexIds: context.omittedVertexIds,
+      omittedEdgeIds: context.omittedEdgeIds,
+      expansionHandles: context.expansionHandles,
+      createdAt: this.deps.clock.now(),
+    });
+  }
+
+  /** Audit-only write: no revision bump and no GraphEvent. */
+  private async archiveVertexProjection(
+    snapshot: GraphSnapshot,
+    vertexId: VertexId,
+    policy: ProjectionPolicy,
+    context: VertexExpansionContext,
+  ): Promise<void> {
+    await this.deps.repository.saveContextProjection({
+      projectionId: this.deps.ids.newId('projection'),
+      sessionId: snapshot.session.sessionId,
+      subjectKind: 'Vertex',
+      subjectId: vertexId,
+      policy,
+      graphRevision: snapshot.graphRevision,
+      snapshotHash: snapshot.snapshotHash,
+      contextHash: context.contextHash,
+      includedVertexIds: [
+        context.currentVertex.vertexId,
+        ...context.ancestorVertices.map((vertex) => vertex.vertexId),
+      ],
+      includedEdgeIds: context.ancestorEdges.map((edge) => edge.edgeId),
       omittedVertexIds: context.omittedVertexIds,
       omittedEdgeIds: context.omittedEdgeIds,
       expansionHandles: context.expansionHandles,

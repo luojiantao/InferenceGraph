@@ -1,6 +1,6 @@
 import type { GoalState, GraphSnapshot, VertexId } from '@reasoner/schema';
 import { buildGraphIndex } from './graph-index.js';
-import { baseVertexIds, toCompletedIncidenceGraph } from './graph-index.js';
+import { baseVertexIds, toCompletedFormulaIncidenceGraph } from './graph-index.js';
 import { isSupported, minimalHyperpath, type Hyperpath } from './graph-algorithms.js';
 
 export interface GoalAssessment {
@@ -25,7 +25,7 @@ export interface GoalAssessment {
 export const assessGoal = (snapshot: GraphSnapshot): GoalAssessment => {
   const index = buildGraphIndex(snapshot);
   const goalVertexId: VertexId = snapshot.session.goalVertexId;
-  const completed = toCompletedIncidenceGraph(index);
+  const completed = toCompletedFormulaIncidenceGraph(index);
 
   /**
    * The goal must be *derived*, never assumed. baseVertexIds() treats any vertex

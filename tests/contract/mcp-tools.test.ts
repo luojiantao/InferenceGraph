@@ -50,16 +50,17 @@ const EXPECTED_TOOLS = [
   'complete_inference_edge',
   'block_inference_edge',
   'get_context_for_vertex',
+  'get_reasoning_text_for_vertex',
   'get_context_for_edge',
   'get_reasoning_context',
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 19 agreed tools', () => {
+  it('exposes exactly the 20 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(20);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -83,6 +84,7 @@ describe('MCP tool surface', () => {
       'get_inference_edge',
       'list_candidate_edges',
       'get_context_for_vertex',
+      'get_reasoning_text_for_vertex',
       'get_context_for_edge',
       'get_reasoning_context',
     ]);
@@ -113,6 +115,50 @@ describe('MCP input validation', () => {
     storage.close();
   });
 
+  it('reserves Vn and En identifiers for generated session references', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'goal',
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const session = (created.value as { session: { sessionId: string; graphRevision: number } })
+      .session;
+
+    const reservedVertex = await controller.invoke('add_state_vertex', {
+      sessionId: session.sessionId,
+      baseGraphRevision: session.graphRevision,
+      agentId: 'agent-a',
+      vertexId: 'V99',
+      label: 'reserved vertex id',
+    });
+    expect(isErr(reservedVertex)).toBe(true);
+    if (isErr(reservedVertex)) expect(reservedVertex.error.code).toBe('InvalidInput');
+
+    const source = await controller.invoke('add_state_vertex', {
+      sessionId: session.sessionId,
+      baseGraphRevision: session.graphRevision,
+      agentId: 'agent-a',
+      label: 'source',
+    });
+    if (!isOk(source)) throw new Error('source creation failed');
+    const sourceOut = source.value as { graphRevision: number };
+
+    const reservedEdge = await controller.invoke('propose_inference_edge', {
+      sessionId: session.sessionId,
+      baseGraphRevision: sourceOut.graphRevision,
+      agentId: 'agent-a',
+      edgeId: 'E99',
+      sourceVertexIds: ['V2'],
+      targetVertexIds: ['V1'],
+      label: 'reserved edge id',
+    });
+    expect(isErr(reservedEdge)).toBe(true);
+    if (isErr(reservedEdge)) expect(reservedEdge.error.code).toBe('InvalidInput');
+
+    storage.close();
+  });
+
   it('reports a missing session as SessionNotFound, not a crash', async () => {
     const { controller, storage } = newController();
     const result = await controller.invoke('get_reasoning_session', {
@@ -130,6 +176,146 @@ describe('MCP input validation', () => {
       goalLabel: 'minimal input',
     });
     expect(isOk(result)).toBe(true);
+    storage.close();
+  });
+
+  it('resolves session-local Vn and En references in MCP tool inputs', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'goal',
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const createdOut = created.value as {
+      session: { sessionId: string; graphRevision: number };
+      goalVertex: { referenceId: string };
+    };
+    const session = createdOut.session;
+    expect(createdOut.goalVertex.referenceId).toBe('V1');
+
+    const premise = await controller.invoke('add_state_vertex', {
+      sessionId: session.sessionId,
+      baseGraphRevision: session.graphRevision,
+      agentId: 'agent-a',
+      label: 'premise',
+    });
+    if (!isOk(premise)) throw new Error('premise creation failed');
+    const premiseOut = premise.value as {
+      vertex: { vertexId: string; referenceId: string };
+      graphRevision: number;
+    };
+    expect(premiseOut.vertex.referenceId).toBe('V2');
+
+    const conclusion = await controller.invoke('add_state_vertex', {
+      sessionId: session.sessionId,
+      baseGraphRevision: premiseOut.graphRevision,
+      agentId: 'agent-a',
+      label: 'conclusion',
+    });
+    if (!isOk(conclusion)) throw new Error('conclusion creation failed');
+    const conclusionOut = conclusion.value as {
+      vertex: { vertexId: string; referenceId: string };
+      graphRevision: number;
+    };
+    expect(conclusionOut.vertex.referenceId).toBe('V3');
+
+    const vertexContext = await controller.invoke('get_context_for_vertex', {
+      sessionId: session.sessionId,
+      vertexId: 'V2',
+    });
+    expect(isOk(vertexContext)).toBe(true);
+    if (isOk(vertexContext)) {
+      expect(
+        (vertexContext.value as { context: { currentVertex: { vertexId: string } } }).context
+          .currentVertex.vertexId,
+      ).toBe(premiseOut.vertex.vertexId);
+    }
+
+    const proposed = await controller.invoke('propose_inference_edge', {
+      sessionId: session.sessionId,
+      baseGraphRevision: conclusionOut.graphRevision,
+      agentId: 'agent-a',
+      sourceVertexIds: ['V2'],
+      targetVertexIds: ['V3'],
+      label: 'premise implies conclusion',
+    });
+    if (!isOk(proposed)) throw new Error('edge proposal failed');
+    const proposedOut = proposed.value as { edge: { edgeId: string; referenceId: string } };
+    expect(proposedOut.edge.referenceId).toBe('E1');
+
+    const edge = await controller.invoke('get_inference_edge', {
+      sessionId: session.sessionId,
+      edgeId: 'E1',
+    });
+    expect(isOk(edge)).toBe(true);
+    if (isOk(edge)) {
+      expect((edge.value as { edge: { edgeId: string } }).edge.edgeId).toBe(
+        proposedOut.edge.edgeId,
+      );
+    }
+
+    storage.close();
+  });
+
+  it('expands Vn endpoint batches into independent En edges in one AND formula', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'target',
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const createdOut = created.value as {
+      session: { sessionId: string; graphRevision: number };
+      goalVertex: { vertexId: string };
+    };
+    const session = createdOut.session;
+
+    let revision = session.graphRevision;
+    const premiseVertexIds: string[] = [];
+    for (const label of ['first premise', 'second premise', 'third premise']) {
+      const added = await controller.invoke('add_state_vertex', {
+        sessionId: session.sessionId,
+        baseGraphRevision: revision,
+        agentId: 'agent-a',
+        label,
+      });
+      if (!isOk(added)) throw new Error(`failed to add ${label}`);
+      const output = added.value as { graphRevision: number; vertex: { vertexId: string } };
+      revision = output.graphRevision;
+      premiseVertexIds.push(output.vertex.vertexId);
+    }
+
+    const proposed = await controller.invoke('propose_inference_edge', {
+      sessionId: session.sessionId,
+      baseGraphRevision: revision,
+      agentId: 'agent-a',
+      sourceVertexIds: ['V2', 'V3', 'V4'],
+      targetVertexIds: ['V1'],
+      label: 'all premises jointly support the target',
+      evidenceQuestions: [{ prompt: 'What supports this relation?' }],
+    });
+    if (!isOk(proposed)) throw new Error('batch proposal failed');
+    const output = proposed.value as {
+      edge: { referenceId: string };
+      edges: Array<{
+        referenceId: string;
+        formulaId: string;
+        sourceVertexIds: string[];
+        targetVertexIds: string[];
+        evidenceQuestions: Array<{ questionId: string }>;
+      }>;
+    };
+
+    expect(output.edge.referenceId).toBe('E1');
+    expect(output.edges.map((edge) => edge.referenceId)).toEqual(['E1', 'E2', 'E3']);
+    expect(new Set(output.edges.map((edge) => edge.formulaId)).size).toBe(1);
+    expect(
+      output.edges.map((edge) => [edge.sourceVertexIds, edge.targetVertexIds]),
+    ).toEqual(
+      premiseVertexIds.map((vertexId) => [[vertexId], [createdOut.goalVertex.vertexId]]),
+    );
+    expect(output.edges.map((edge) => edge.evidenceQuestions.length)).toEqual([1, 1, 1]);
+
     storage.close();
   });
 });
@@ -236,6 +422,25 @@ describe('MCP end-to-end tool flow', () => {
     });
     if (!isOk(completed)) throw new Error('complete failed');
     expect((completed.value as { edge: { state: string } }).edge.state).toBe('Completed');
+
+    const reasoningText = await controller.invoke('get_reasoning_text_for_vertex', {
+      sessionId: session.sessionId,
+      vertexId: 'V3',
+    });
+    expect(isOk(reasoningText)).toBe(true);
+    if (isOk(reasoningText)) {
+      const rendered = reasoningText.value as {
+        context: { currentVertex: { vertexId: string } };
+        mermaid: string;
+        reasoningText: string;
+      };
+      expect(rendered.context.currentVertex.vertexId).toBe(conclusionOut.vertex.vertexId);
+      expect(rendered.mermaid).toContain('flowchart TD');
+      expect(rendered.mermaid).toContain('E1');
+      expect(rendered.reasoningText).toContain('```mermaid');
+      expect(rendered.reasoningText).toContain('边状态：Completed');
+      expect(rendered.reasoningText).toContain('the conclusion holds');
+    }
 
     storage.close();
   });

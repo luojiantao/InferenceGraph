@@ -1,6 +1,6 @@
 {
   "name": "BD1",
-  "description": "Synthetic fixture exercising merge inference, evidence questions and multi-premise derivation. Entity names are placeholder labels only; the Core assigns them no meaning.",
+  "description": "Synthetic fixture exercising batch expansion into independent inference edges and edge-local evidence questions. Entity names are placeholder labels only; the Core assigns them no meaning.",
   "goalLabel": "slot BD1:1 is blocked for request PJ5860",
   "goalPayload": { "slot": "BD1:1", "request": "PJ5860" },
   "vertices": [
