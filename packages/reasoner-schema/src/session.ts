@@ -69,6 +69,7 @@ export type ReasoningSession = z.infer<typeof ReasoningSessionSchema>;
 
 export const GraphEventKindSchema = z.enum([
   'SessionCreated',
+  'SessionEdgeBudgetIncreased',
   'VertexAdded',
   'EdgeProposed',
   'EdgeClaimed',

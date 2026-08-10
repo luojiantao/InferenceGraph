@@ -47,7 +47,7 @@ export interface MutationDraft {
   readonly sessionPatch?: Partial<
     Pick<
       ReasoningSession,
-      'goalState' | 'strategy' | 'projectionPolicy' | 'structuralError' | 'finishedReason'
+      'goalState' | 'strategy' | 'projectionPolicy' | 'budget' | 'structuralError' | 'finishedReason'
     >
   >;
   readonly events: readonly GraphEventDraft[];

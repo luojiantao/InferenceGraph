@@ -277,7 +277,8 @@ export class SqliteReasonerRepository implements ReasonerRepository {
         .prepare(
           `UPDATE reasoning_sessions
              SET graph_revision = ?, updated_at = ?,
-                 goal_state = COALESCE(?, goal_state),
+                  max_edges = COALESCE(?, max_edges),
+                  goal_state = COALESCE(?, goal_state),
                  strategy = COALESCE(?, strategy),
                  projection_policy = COALESCE(?, projection_policy),
                  structural_error = COALESCE(?, structural_error),
@@ -287,6 +288,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
         .run(
           nextRevision,
           now,
+          patch?.budget?.maxEdges ?? null,
           patch?.goalState ?? null,
           patch?.strategy ?? null,
           patch?.projectionPolicy ?? null,

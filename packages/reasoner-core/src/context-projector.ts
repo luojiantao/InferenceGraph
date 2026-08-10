@@ -15,17 +15,14 @@ import { buildGraphIndex, type GraphIndex } from './graph-index.js';
 import { hashCanonical } from './dedup.js';
 import { orderFrontier } from './search-strategy.js';
 
-/**
- * Walks Completed incoming edges backwards from a vertex, collecting the whole
- * necessary ancestor set.
- *
- * Every persisted relation has one source and one target. Traversing incoming
- * completed edges therefore collects each upstream dependency independently.
- */
-export const collectAncestors = (
+type AncestorEdgePredicate = (edge: InferenceEdge) => boolean;
+
+/** Shared backwards traversal with an explicit inclusion rule per projection type. */
+const collectAncestorsWhere = (
   index: GraphIndex,
   start: VertexId,
   maxDepth: number,
+  includeEdge: AncestorEdgePredicate,
 ): { vertices: readonly Vertex[]; edges: readonly InferenceEdge[] } => {
   const seenVertices = new Set<VertexId>();
   const seenEdges = new Set<EdgeId>();
@@ -42,7 +39,7 @@ export const collectAncestors = (
     const incoming = index.incomingEdgeIds.get(current.vertexId) ?? [];
     for (const edgeId of incoming) {
       const edge = index.edgeById.get(edgeId);
-      if (edge === undefined || edge.state !== 'Completed') continue;
+      if (edge === undefined || !includeEdge(edge)) continue;
       if (seenEdges.has(edgeId)) continue;
       seenEdges.add(edgeId);
       edges.push(edge);
@@ -64,6 +61,34 @@ export const collectAncestors = (
     edges: [...edges].sort((a, b) => (a.edgeId < b.edgeId ? -1 : 1)),
   };
 };
+
+/**
+ * Walks Completed incoming edges backwards for execution contexts. Unverified
+ * candidate branches must not affect a claim's completion hash.
+ */
+export const collectAncestors = (
+  index: GraphIndex,
+  start: VertexId,
+  maxDepth: number,
+): { vertices: readonly Vertex[]; edges: readonly InferenceEdge[] } =>
+  collectAncestorsWhere(index, start, maxDepth, (edge) => edge.state === 'Completed');
+
+/**
+ * Vertex views are planning and audit surfaces, so they retain active and
+ * blocked alternatives. Abandoned and invalid relations are excluded because
+ * they no longer form a usable or explainable dependency branch.
+ */
+const collectVertexProjectionAncestors = (
+  index: GraphIndex,
+  start: VertexId,
+  maxDepth: number,
+): { vertices: readonly Vertex[]; edges: readonly InferenceEdge[] } =>
+  collectAncestorsWhere(
+    index,
+    start,
+    maxDepth,
+    (edge) => edge.state !== 'Abandoned' && edge.state !== 'Invalid',
+  );
 
 const buildGlobalSummary = (index: GraphIndex): GlobalNavigationSummary => {
   const counts: Record<string, number> = {};
@@ -122,7 +147,7 @@ export const projectVertexContext = (
           vertices: [...snapshot.vertices].sort((a, b) => (a.vertexId < b.vertexId ? -1 : 1)),
           edges: [...snapshot.edges].sort((a, b) => (a.edgeId < b.edgeId ? -1 : 1)),
         }
-      : collectAncestors(index, vertexId, maxDepth);
+      : collectVertexProjectionAncestors(index, vertexId, maxDepth);
 
   const includedVertexIds = new Set<VertexId>([vertexId, ...ancestors.vertices.map((v) => v.vertexId)]);
   const includedEdgeIds = new Set<EdgeId>(ancestors.edges.map((e) => e.edgeId));

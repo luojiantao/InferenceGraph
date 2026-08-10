@@ -33,6 +33,9 @@ const escapeMermaidLabel = (value: string): string =>
     .replaceAll('\r\n', '<br/>')
     .replaceAll('\n', '<br/>');
 
+const escapeMermaidEdgeLabel = (value: string): string =>
+  escapeMermaidLabel(value).replaceAll('|', '&#124;');
+
 const escapeMarkdownInline = (value: string): string =>
   value
     .replaceAll('\\', '\\\\')
@@ -114,7 +117,8 @@ export const renderVertexReasoningContext = (
   const vertexById = new Map<string, Vertex>();
   for (const vertex of context.ancestorVertices) vertexById.set(vertex.vertexId, vertex);
   vertexById.set(context.currentVertex.vertexId, context.currentVertex);
-  vertexById.set(context.goalVertex.vertexId, context.goalVertex);
+  // The session goal remains in the text header. The diagram itself must only
+  // contain vertices belonging to the requested dependency projection.
 
   const vertices = [...vertexById.values()].sort((left, right) =>
     compareReferences(
@@ -141,7 +145,7 @@ export const renderVertexReasoningContext = (
   const mermaidLines = [
     'flowchart TD',
     '  %% 箭头方向表示来源顶点到目标顶点，边标签是独立推理边索引。',
-    '  %% 未连接的目标节点仅表示会话目标，不表示已建立推导关系。',
+    '  %% 仅绘制当前依赖投影中的顶点；会话目标只在它属于该投影时出现。',
   ];
 
   for (const vertex of vertices) {
@@ -164,7 +168,8 @@ export const renderVertexReasoningContext = (
     const targetNode = vertexNodeId.get(edge.targetVertexIds[0] ?? '');
     if (sourceNode === undefined || targetNode === undefined) continue;
     const edgeReference = aliases.edgeById.get(edge.edgeId) ?? edge.edgeId;
-    mermaidLines.push(`  ${sourceNode} -->|${escapeMermaidLabel(edgeReference)}| ${targetNode}`);
+    const edgeLabel = `${edgeReference} · ${edge.label}`;
+    mermaidLines.push(`  ${sourceNode} -->|${escapeMermaidEdgeLabel(edgeLabel)}| ${targetNode}`);
   }
   for (const formula of currentFormulae) {
     mermaidLines.push(

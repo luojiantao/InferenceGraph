@@ -28,7 +28,7 @@ InferenceGraph 负责记录和调度推理过程，不负责：
 | 测试          | Vitest `3.2.4`、Playwright `1.57.0`                                        |
 | MCP HTTP 地址 | `http://127.0.0.1:8791/mcp`                                                |
 | Web 开发地址  | `http://127.0.0.1:5174`                                                    |
-| 工具数量      | 20 个（以 `tools/list` 为准）                                              |
+| 工具数量      | 21 个（以 `tools/list` 为准）                                              |
 | 认证          | 当前没有认证层，默认只绑定回环地址                                         |
 | stdio         | 当前没有 stdio server 入口                                                 |
 
@@ -54,7 +54,7 @@ InferenceGraph/
 │   ├── reasoner-schema/       # Zod schema、ID、错误和领域类型
 │   ├── reasoner-core/         # 推理服务、图算法、前沿和上下文投影
 │   ├── reasoner-storage/      # SQLite repository、迁移和 JSONL 审计
-│   ├── reasoner-mcp/          # 20 个 MCP 工具及统一 controller
+│   ├── reasoner-mcp/          # 21 个 MCP 工具及统一 controller
 │   ├── reasoner-logging/      # Pino 文件日志、轮转和脱敏
 │   └── reasoner-test-agent/   # 不访问网络的 BD1 fixture 回放 CLI
 ├── tests/
@@ -118,7 +118,7 @@ curl http://127.0.0.1:8791/health
 预期响应：
 
 ```json
-{ "status": "ok", "tools": 20 }
+{ "status": "ok", "tools": 21 }
 ```
 
 ### 3. 启动 Web UI
@@ -297,6 +297,7 @@ finish_reasoning_session（需要显式结束时）
 | -------------------------- | -------------------------------------------------------------- | ------ |
 | `create_reasoning_session` | 创建会话和 Goal 顶点                                           | 是     |
 | `get_reasoning_session`    | 读取会话状态、策略、预算和 revision                            | 否     |
+| `increase_reasoning_session_edge_budget` | 提高活动会话的物理边预算 `maxEdges`                  | 是     |
 | `list_reasoning_sessions`  | 按最近更新时间列出会话                                         | 否     |
 | `finish_reasoning_session` | 以显式目标状态结束会话，并将 Candidate/Leased 边置为 Abandoned | 是     |
 | `add_state_vertex`         | 添加 State 顶点                                                | 是     |
@@ -326,7 +327,7 @@ finish_reasoning_session（需要显式结束时）
 | `get_context_for_edge`          | 获取执行边所需的前提、结论、祖先和上下文哈希 | 否     |
 | `get_reasoning_context`         | 获取会话快照、前沿、状态计数和分页事件       | 否     |
 
-`get_reasoning_text_for_vertex` 接受与 `get_context_for_vertex` 相同的 `sessionId`、`vertexId`、`policy` 和 `expansionHandleId`。它返回原始 `context`、可直接展示的 Markdown `reasoningText`（其中包含 Mermaid 代码块）和可单独渲染的原始 `mermaid`。文本会先列出当前顶点的公式组以及每组完成进度；Mermaid 把当前顶点的公式摘要直接写在该顶点标签中，同时仍只画带 `En` 标签的直接箭头，不生成中间公式节点。
+`get_reasoning_text_for_vertex` 接受与 `get_context_for_vertex` 相同的 `sessionId`、`vertexId`、`policy` 和 `expansionHandleId`。它返回原始 `context`、可直接展示的 Markdown `reasoningText`（其中包含 Mermaid 代码块）和可单独渲染的原始 `mermaid`。文本会先列出当前顶点的公式组以及每组完成进度；Mermaid 只绘制该顶点的依赖投影，不会额外注入无关的会话 Goal，并保留 Candidate、Leased、Completed 与 Blocked 的上游关系。当前顶点的公式摘要写在该顶点标签中，每条直接箭头则显示 `En · 边描述`，不生成中间公式节点。
 
 ```json
 {

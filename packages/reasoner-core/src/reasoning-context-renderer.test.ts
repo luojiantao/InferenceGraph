@@ -45,11 +45,12 @@ const edge = (id: string, referenceId: string, sourceId: string, targetId: strin
   }) as InferenceEdge;
 
 describe('renderVertexReasoningContext', () => {
-  it('uses one direct Mermaid arrow and one En label for every independent relation', () => {
+  it('uses direct described edges without injecting an unrelated session goal', () => {
     const v1 = vertex('source-1', 'V1', 'first premise', 'State');
+    const v2 = vertex('session-goal', 'V2', 'session goal', 'Goal');
     const v3 = vertex('source-3', 'V3', 'second premise', 'State');
     const v4 = vertex('source-4', 'V4', 'third premise', 'Evidence');
-    const v9 = vertex('target', 'V9', 'current conclusion', 'Goal');
+    const v9 = vertex('target', 'V9', 'current conclusion', 'State');
     const edges = [
       edge('edge-1', 'E1', v1.vertexId, v9.vertexId),
       edge('edge-2', 'E2', v3.vertexId, v9.vertexId),
@@ -60,7 +61,7 @@ describe('renderVertexReasoningContext', () => {
       vertexId: v9.vertexId,
       policy: 'DependencySubgraph',
       graphRevision: 1,
-      goalVertex: v9,
+      goalVertex: v2,
       currentVertex: v9,
       ancestorVertices: [v1, v3, v4],
       ancestorEdges: edges,
@@ -73,17 +74,18 @@ describe('renderVertexReasoningContext', () => {
 
     const rendered = renderVertexReasoningContext(
       context,
-      buildGraphAliases({ vertices: [v1, v3, v4, v9], edges }),
+      buildGraphAliases({ vertices: [v1, v2, v3, v4, v9], edges }),
     );
 
-    expect(rendered.mermaid).toContain('  v1 -->|E1| v9');
-    expect(rendered.mermaid).toContain('  v3 -->|E2| v9');
-    expect(rendered.mermaid).toContain('  v4 -->|E3| v9');
+    expect(rendered.mermaid).toContain('  v1 -->|E1 · E1 relation| v9');
+    expect(rendered.mermaid).toContain('  v3 -->|E2 · E2 relation| v9');
+    expect(rendered.mermaid).toContain('  v4 -->|E3 · E3 relation| v9');
     expect(rendered.mermaid).toContain(
       'v9["V9 · current conclusion<br/>公式：E1 ∧ E2 ∧ E3"]',
     );
     expect(rendered.mermaid).toContain('E1 ∧ E2 ∧ E3: V1 ∧ V3 ∧ V4 -> V9');
     expect(rendered.reasoningText).toContain('该公式内的全部条件都必须完成');
+    expect(rendered.mermaid).not.toContain('v2[');
     expect(rendered.mermaid).not.toContain('{{');
   });
 });

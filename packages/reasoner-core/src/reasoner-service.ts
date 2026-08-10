@@ -36,6 +36,8 @@ import {
   type GetReasoningSessionOutput,
   type GetReasoningTextForVertexInput,
   type GetReasoningTextForVertexOutput,
+  type IncreaseReasoningSessionEdgeBudgetInput,
+  type IncreaseReasoningSessionEdgeBudgetOutput,
   type GetVertexInput,
   type GetVertexOutput,
   type GraphAliases,
@@ -235,6 +237,57 @@ export class ReasonerService {
   ): Promise<Result<GetReasoningSessionOutput>> {
     const session = await this.deps.repository.getSession(input.sessionId);
     return isErr(session) ? session : ok({ session: session.value });
+  }
+
+  /** Raises an active session's physical-edge budget without changing other limits. */
+  async increaseReasoningSessionEdgeBudget(
+    input: IncreaseReasoningSessionEdgeBudgetInput,
+  ): Promise<Result<IncreaseReasoningSessionEdgeBudgetOutput>> {
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const fromMaxEdges = snapshot.session.budget.maxEdges;
+        if (input.maxEdges <= fromMaxEdges) {
+          return err(
+            'InvalidInput',
+            `maxEdges must increase from ${fromMaxEdges}`,
+            { fromMaxEdges, requestedMaxEdges: input.maxEdges },
+          );
+        }
+        if (input.maxEdges < snapshot.edges.length) {
+          return err(
+            'InvalidInput',
+            `maxEdges ${input.maxEdges} cannot be below the ${snapshot.edges.length} existing edges`,
+            { existingEdgeCount: snapshot.edges.length, requestedMaxEdges: input.maxEdges },
+          );
+        }
+
+        return ok<MutationDraft>({
+          sessionPatch: {
+            budget: { ...snapshot.session.budget, maxEdges: input.maxEdges },
+          },
+          events: [
+            {
+              kind: 'SessionEdgeBudgetIncreased',
+              actorAgentId: input.agentId,
+              detail: { fromMaxEdges, toMaxEdges: input.maxEdges },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+
+    await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    return ok({
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      session: outcome.value.snapshot.session,
+    });
   }
 
   /** Returns the authoritative session-local Vn/En reference map. */

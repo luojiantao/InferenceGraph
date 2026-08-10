@@ -14,6 +14,7 @@ import {
   GetReasoningContextInputSchema,
   GetReasoningSessionInputSchema,
   GetReasoningTextForVertexInputSchema,
+  IncreaseReasoningSessionEdgeBudgetInputSchema,
   GetVertexInputSchema,
   ListCandidateEdgesInputSchema,
   ListReasoningSessionsInputSchema,
@@ -151,6 +152,15 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: false,
       inputSchema: GetReasoningSessionInputSchema,
       handler: (input) => service.getReasoningSession(input),
+    }),
+    define({
+      name: 'increase_reasoning_session_edge_budget',
+      title: 'Increase reasoning session edge budget',
+      description:
+        'Raises maxEdges for an active session. The value must exceed the current limit and cover every already stored physical edge.',
+      mutating: true,
+      inputSchema: IncreaseReasoningSessionEdgeBudgetInputSchema,
+      handler: (input) => service.increaseReasoningSessionEdgeBudget(input),
     }),
     define({
       name: 'list_reasoning_sessions',

@@ -81,7 +81,16 @@ export const FinishReasoningSessionOutputSchema = RevisionAck.extend({
   abandonedEdgeIds: z.array(EdgeIdSchema),
 });
 
-// --- 5. add_state_vertex ---
+// --- 5. increase_reasoning_session_edge_budget ---
+export const IncreaseReasoningSessionEdgeBudgetInputSchema = WriteCommandBase.extend({
+  /** New absolute limit; it must be greater than the current maxEdges value. */
+  maxEdges: z.number().int().positive().max(100_000),
+});
+export const IncreaseReasoningSessionEdgeBudgetOutputSchema = RevisionAck.extend({
+  session: ReasoningSessionSchema,
+});
+
+// --- 6. add_state_vertex ---
 export const AddStateVertexInputSchema = WriteCommandBase.extend({
   vertexId: VertexIdSchema.optional(),
   label: z.string().min(1).max(400),
@@ -285,6 +294,12 @@ export type ListReasoningSessionsInput = z.infer<typeof ListReasoningSessionsInp
 export type ListReasoningSessionsOutput = z.infer<typeof ListReasoningSessionsOutputSchema>;
 export type FinishReasoningSessionInput = z.infer<typeof FinishReasoningSessionInputSchema>;
 export type FinishReasoningSessionOutput = z.infer<typeof FinishReasoningSessionOutputSchema>;
+export type IncreaseReasoningSessionEdgeBudgetInput = z.infer<
+  typeof IncreaseReasoningSessionEdgeBudgetInputSchema
+>;
+export type IncreaseReasoningSessionEdgeBudgetOutput = z.infer<
+  typeof IncreaseReasoningSessionEdgeBudgetOutputSchema
+>;
 export type AddStateVertexInput = z.infer<typeof AddStateVertexInputSchema>;
 export type AddStateVertexOutput = z.infer<typeof AddStateVertexOutputSchema>;
 export type AddEvidenceVertexInput = z.infer<typeof AddEvidenceVertexInputSchema>;

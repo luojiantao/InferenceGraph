@@ -8,7 +8,7 @@
 | ----------- | ---------------------------------------------------- |
 | MCP 端点    | `http://127.0.0.1:8791/mcp`                          |
 | 传输        | MCP Streamable HTTP；服务端开启 JSON 响应模式        |
-| 工具数量    | 20 个                                                |
+| 工具数量    | 21 个                                                |
 | 服务名/版本 | `inference-graph-reasoner` / `0.1.0`                 |
 | 默认监听    | 仅回环地址 `127.0.0.1`                               |
 | 鉴权        | 当前没有鉴权或 API Key                               |
@@ -86,7 +86,7 @@ curl http://127.0.0.1:8791/health
 正常返回类似：
 
 ```json
-{ "status": "ok", "tools": 20 }
+{ "status": "ok", "tools": 21 }
 ```
 
 ### 3.2 服务端环境变量
@@ -342,7 +342,7 @@ await transport.close();
 
 前沿排序是确定性的：DFS 优先深度、BFS 优先浅度、Priority 优先高 `priority`；相同条件最终按 `edgeId` 排序。
 
-## 8. 20 个 MCP 工具参考
+## 8. 21 个 MCP 工具参考
 
 ### 8.1 参数约定
 
@@ -354,10 +354,11 @@ await transport.close();
 | -------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create_reasoning_session` | 是     | `sessionId?`: ID；`agentId`: ID；`goalLabel`: string 1–400；`goalPayload?`: object，默认 `{}`；`strategy?`: enum，默认 `DFS`；`projectionPolicy?`: enum，默认 `DependencySubgraphWithGlobalSummary`；`budget?`: `{maxEdges?, maxDepth?, maxLeaseSeconds?}`，各自受上限约束 |
 | `get_reasoning_session`    | 否     | `sessionId`: ID                                                                                                                                                                                                                                                            |
+| `increase_reasoning_session_edge_budget` | 是 | 通用写字段；`maxEdges`: 正整数 ≤100000，必须高于当前值且不低于已存储的物理边数 |
 | `list_reasoning_sessions`  | 否     | `includeFinished?`: boolean，默认 `false`；`limit?`: 正整数 ≤500，默认 `100`                                                                                                                                                                                               |
 | `finish_reasoning_session` | 是     | 通用写字段；`goalState`: enum；`reason`: string 1–2000                                                                                                                                                                                                                     |
 
-返回：创建返回 `{session, goalVertex}`；查询返回 `{session}`；列表返回 `{sessions}`；结束返回 `{graphRevision, lastEventSeq, session, abandonedEdgeIds}`。结束调用建议使用终态 `GoalSatisfied`、`GoalConflicted`、`Exhausted`、`BudgetExceeded` 或 `StructurallyInvalid`；当前 schema 虽接受任意 `goalState`，传入 `Exploring`/`CandidateFound`/`Verifying` 不会把会话真正置为终态。
+返回：创建返回 `{session, goalVertex}`；查询返回 `{session}`；预算提高返回 `{graphRevision, lastEventSeq, session}`；列表返回 `{sessions}`；结束返回 `{graphRevision, lastEventSeq, session, abandonedEdgeIds}`。结束调用建议使用终态 `GoalSatisfied`、`GoalConflicted`、`Exhausted`、`BudgetExceeded` 或 `StructurallyInvalid`；当前 schema 虽接受任意 `goalState`，传入 `Exploring`/`CandidateFound`/`Verifying` 不会把会话真正置为终态。
 
 #### 顶点工具
 
@@ -406,7 +407,7 @@ claim 会在同一事务内回收已经过期的租约，再按指定边或策�
 | `get_context_for_edge`   | 否     | `sessionId`、`edgeId`；`policy?`；`expansionHandleId?`                                   | `{context: EdgeExecutionContext}`                                                    |
 | `get_reasoning_context`  | 否     | `sessionId`；`afterEventSeq?` 非负整数，默认 `0`；`eventLimit?` 正整数 ≤1000，默认 `200` | `{snapshot, frontierEdgeIds, edgeCountByState, events, nextEventSeq, hasMoreEvents}` |
 
-`get_reasoning_text_for_vertex` 使用与 `get_context_for_vertex` 相同的依赖投影，返回包含 Mermaid 代码块的 `reasoningText` 和可单独渲染的原始 `mermaid`。文本会写出当前顶点的合取公式、完成进度及多个公式组间的析取关系；Mermaid 把公式摘要写在当前顶点标签中，仍只画带 `En` 标签的直接箭头，不会生成不存在的中间公式节点或推导连线。`get_context_for_edge` 的 `context.contextHash` 是执行视角的哈希；claim 返回的 context 会被归档，complete 必须提交 claim 返回的那一个 hash。`get_reasoning_context` 的增量游标是 `eventSeq`，不要用 `graphRevision` 分页。
+`get_reasoning_text_for_vertex` 使用与 `get_context_for_vertex` 相同的依赖投影，返回包含 Mermaid 代码块的 `reasoningText` 和可单独渲染的原始 `mermaid`。文本会写出当前顶点的合取公式、完成进度及多个公式组间的析取关系；Mermaid 只绘制当前依赖投影中的顶点，不会额外注入无关的会话 Goal，并保留 Candidate、Leased、Completed 与 Blocked 的上游关系。它把公式摘要写在当前顶点标签中，每条直接箭头显示 `En · 边描述`，不会生成不存在的中间公式节点或推导连线。`get_context_for_edge` 的 `context.contextHash` 是执行视角的哈希；claim 返回的 context 会被归档，complete 必须提交 claim 返回的那一个 hash。`get_reasoning_context` 的增量游标是 `eventSeq`，不要用 `graphRevision` 分页。
 
 ### 8.2 顶点/边返回对象的关键字段
 
@@ -493,7 +494,7 @@ tail -f data/logs/reasoner-server.log | jq 'select(.errorCode)'
 
 ## 12. 版本与扩展
 
-工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 20 个工具。
+工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 21 个工具。
 
 如果需要在另一个 Node 进程中嵌入 MCP server，可依赖 `@reasoner/mcp` 的 `createReasonerMcpServer(service)`；该函数只创建 MCP server 和 controller，不创建存储或 HTTP listener。生产接入仍建议使用 `@reasoner/server`，让数据目录、生命周期和 session transport 由统一应用管理。
 

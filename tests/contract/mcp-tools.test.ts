@@ -35,6 +35,7 @@ const newController = () => {
 const EXPECTED_TOOLS = [
   'create_reasoning_session',
   'get_reasoning_session',
+  'increase_reasoning_session_edge_budget',
   'list_reasoning_sessions',
   'finish_reasoning_session',
   'add_state_vertex',
@@ -56,11 +57,11 @@ const EXPECTED_TOOLS = [
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 20 agreed tools', () => {
+  it('exposes exactly the 21 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(20);
+    expect(names).toHaveLength(21);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -176,6 +177,42 @@ describe('MCP input validation', () => {
       goalLabel: 'minimal input',
     });
     expect(isOk(result)).toBe(true);
+    storage.close();
+  });
+
+  it('raises a session edge budget with revision protection', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'budgeted goal',
+      budget: { maxEdges: 1 },
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const session = (created.value as { session: { sessionId: string; graphRevision: number } })
+      .session;
+
+    const increased = await controller.invoke('increase_reasoning_session_edge_budget', {
+      sessionId: session.sessionId,
+      baseGraphRevision: session.graphRevision,
+      agentId: 'agent-a',
+      maxEdges: 4,
+    });
+    expect(isOk(increased)).toBe(true);
+    if (!isOk(increased)) throw new Error('budget increase failed');
+    const output = increased.value as {
+      graphRevision: number;
+      session: { budget: { maxEdges: number } };
+    };
+    expect(output.session.budget.maxEdges).toBe(4);
+
+    const nonIncrease = await controller.invoke('increase_reasoning_session_edge_budget', {
+      sessionId: session.sessionId,
+      baseGraphRevision: output.graphRevision,
+      agentId: 'agent-a',
+      maxEdges: 4,
+    });
+    expect(isErr(nonIncrease)).toBe(true);
+    if (isErr(nonIncrease)) expect(nonIncrease.error.code).toBe('InvalidInput');
     storage.close();
   });
 
