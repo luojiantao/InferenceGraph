@@ -522,6 +522,44 @@ button:disabled {
   color: var(--fg);
   font-size: 13px;
 }
+.delete-session-id-block {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  background: #14171f;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.delete-session-id-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.delete-session-id-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.delete-session-id-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.copy-session-id {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.delete-session-id-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .danger-button {
   color: #fff;
   background: #9b4037;

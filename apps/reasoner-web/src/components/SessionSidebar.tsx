@@ -41,6 +41,7 @@ export const SessionSidebar = (): ReactElement => {
   const [createError, setCreateError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteIdCopied, setDeleteIdCopied] = useState(false);
   const [creating, setCreating] = useState(false);
   const [savingMetadata, setSavingMetadata] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -128,6 +129,7 @@ export const SessionSidebar = (): ReactElement => {
     setDeletingSession(selectedSession);
     setDeleteConfirmation('');
     setDeleteError(null);
+    setDeleteIdCopied(false);
     setDeleteOpen(true);
   };
 
@@ -137,6 +139,23 @@ export const SessionSidebar = (): ReactElement => {
     setDeletingSession(null);
     setDeleteConfirmation('');
     setDeleteError(null);
+    setDeleteIdCopied(false);
+  };
+
+  const copyDeleteSessionId = async (): Promise<void> => {
+    const target = deletingSession;
+    if (target === null) return;
+    if (navigator.clipboard === undefined) {
+      setDeleteError('当前浏览器不支持自动复制，请手动复制上方会话 ID。');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(target.sessionId);
+      setDeleteIdCopied(true);
+      setDeleteError(null);
+    } catch {
+      setDeleteError('复制会话 ID 失败，请手动复制上方会话 ID。');
+    }
   };
 
   const refreshSessionQueries = async (targetSessionId?: string): Promise<void> => {
@@ -566,6 +585,23 @@ export const SessionSidebar = (): ReactElement => {
           <p className="delete-warning">
             将删除该会话的 SQLite 图、顶点、推理边、事件和上下文投影；已有 JSONL 审计日志会保留。
           </p>
+          <div className="delete-session-id-block">
+            <div className="delete-session-id-label">待删除的完整会话 ID</div>
+            <div className="delete-session-id-row">
+              <code className="delete-session-id-value">
+                {deletingSession?.sessionId ?? '会话已失效，请关闭后重试'}
+              </code>
+              <button
+                type="button"
+                className="copy-session-id"
+                onClick={() => void copyDeleteSessionId()}
+                disabled={deleting || deletingSession === null}
+              >
+                {deleteIdCopied ? '已复制' : '复制 ID'}
+              </button>
+            </div>
+            <p className="delete-session-id-hint">请将上面的完整 ID 粘贴到下方输入框进行确认。</p>
+          </div>
           <label>
             确认会话 ID
             <input
