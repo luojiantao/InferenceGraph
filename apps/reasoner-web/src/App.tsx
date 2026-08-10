@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { useGraphStore } from './state/graph-store.js';
 import { useReasoningContext } from './state/use-reasoning-context.js';
+import { SessionSidebar } from './components/SessionSidebar.js';
 import { SessionToolbar } from './components/SessionToolbar.js';
 import { GraphCanvas } from './components/GraphCanvas.js';
 import { FrontierPanel } from './components/FrontierPanel.js';
@@ -23,52 +24,56 @@ export const App = (): ReactElement => {
 
   return (
     <div className="app">
-      <SessionToolbar />
+      <SessionSidebar />
+      <div className="workspace">
+        <SessionToolbar />
 
-      {sessionId === null ? (
-        <main className="empty" role="status">
-          <h1>选择一个推理会话</h1>
-          <p className="muted">
-            尚未选择会话。使用工具栏的下拉框选择，或通过 MCP 调用 <code>create_reasoning_session</code> 新建。
-          </p>
-        </main>
-      ) : query.isError && view === null ? (
-        <main className="empty error" role="alert">
-          <h1>无法读取推理图</h1>
-          <p className="muted">
-            服务未响应。确认 Reasoner Server 正在运行，UI 会自动重试。
-          </p>
-          <p className="mono small">{query.error instanceof Error ? query.error.message : '未知错误'}</p>
-        </main>
-      ) : view === null ? (
-        <main className="empty" role="status">
-          <h1>加载中…</h1>
-          <p className="muted">正在读取快照与事件。</p>
-        </main>
-      ) : (
-        <main className={`layout layout-${viewMode.toLowerCase()}`}>
-          <section className="pane pane-canvas" aria-label="推理图画布">
-            <GraphCanvas />
-          </section>
+        {sessionId === null ? (
+          <main className="empty" role="status">
+            <h1>选择一个推理会话</h1>
+            <p className="muted">
+              尚未选择会话。使用左侧会话管理选择，或通过 MCP 调用{' '}
+              <code>create_reasoning_session</code> 新建。
+            </p>
+          </main>
+        ) : query.isError && view === null ? (
+          <main className="empty error" role="alert">
+            <h1>无法读取推理图</h1>
+            <p className="muted">服务未响应。确认 Reasoner Server 正在运行，UI 会自动重试。</p>
+            <p className="mono small">
+              {query.error instanceof Error ? query.error.message : '未知错误'}
+            </p>
+          </main>
+        ) : view === null ? (
+          <main className="empty" role="status">
+            <h1>加载中…</h1>
+            <p className="muted">正在读取快照与事件。</p>
+          </main>
+        ) : (
+          <main className={`layout layout-${viewMode.toLowerCase()}`}>
+            <section className="pane pane-canvas" aria-label="推理图画布">
+              <GraphCanvas />
+            </section>
 
-          <aside className="pane pane-side" aria-label="检查器">
-            <FrontierPanel />
-            {selectionKind === 'Edge' && <EdgeInspector />}
-            {selectionKind === 'Vertex' && <VertexInspector />}
-            {selectionKind === null && (
-              <p className="muted small pad">在画布或前沿列表中选择一个顶点或推理边查看详情。</p>
-            )}
-            <ParallelBranchPanel />
-          </aside>
-
-          {viewMode === 'Audit' && (
-            <aside className="pane pane-audit" aria-label="审计">
-              <ContextPanel />
-              <EventTimeline />
+            <aside className="pane pane-side" aria-label="检查器">
+              <FrontierPanel />
+              {selectionKind === 'Edge' && <EdgeInspector />}
+              {selectionKind === 'Vertex' && <VertexInspector />}
+              {selectionKind === null && (
+                <p className="muted small pad">在画布或前沿列表中选择一个顶点或推理边查看详情。</p>
+              )}
+              <ParallelBranchPanel />
             </aside>
-          )}
-        </main>
-      )}
+
+            {viewMode === 'Audit' && (
+              <aside className="pane pane-audit" aria-label="审计">
+                <ContextPanel />
+                <EventTimeline />
+              </aside>
+            )}
+          </main>
+        )}
+      </div>
     </div>
   );
 };
