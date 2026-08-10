@@ -47,9 +47,19 @@ export interface MutationDraft {
   readonly sessionPatch?: Partial<
     Pick<
       ReasoningSession,
-      'goalState' | 'strategy' | 'projectionPolicy' | 'budget' | 'structuralError' | 'finishedReason'
+      | 'goalState'
+      | 'strategy'
+      | 'projectionPolicy'
+      | 'budget'
+      | 'structuralError'
+      | 'finishedReason'
     >
-  >;
+  > & {
+    /** null clears the alias; omitted leaves it unchanged. */
+    readonly alias?: string | null;
+    /** Replaces the complete tag list when present. */
+    readonly tags?: readonly string[];
+  };
   readonly events: readonly GraphEventDraft[];
 }
 
@@ -64,10 +74,7 @@ export interface MutationOutcome {
  * read after the lock is taken. Cycle checks and state-machine validation run
  * here so their result cannot be invalidated between check and write.
  */
-export type MutationPlanner = (
-  snapshot: GraphSnapshot,
-  now: IsoTimestamp,
-) => Result<MutationDraft>;
+export type MutationPlanner = (snapshot: GraphSnapshot, now: IsoTimestamp) => Result<MutationDraft>;
 
 export interface CreateSessionRequest {
   readonly session: ReasoningSession;
@@ -102,6 +109,9 @@ export interface ReasonerRepository {
     expectedRevision: GraphRevision,
     plan: MutationPlanner,
   ): Promise<Result<MutationOutcome>>;
+
+  /** Physically removes a session and its cascading SQLite graph rows after a revision CAS. */
+  deleteSession(sessionId: SessionId, expectedRevision: GraphRevision): Promise<Result<void>>;
 
   saveContextProjection(record: ContextProjectionRecord): Promise<Result<void>>;
   getContextProjection(

@@ -74,7 +74,7 @@ interface SplitEdgePlan {
 
 const hasColumn = (
   db: DatabaseSync,
-  table: 'vertices' | 'inference_edges',
+  table: 'reasoning_sessions' | 'vertices' | 'inference_edges',
   column: string,
 ): boolean =>
   (db.prepare(`PRAGMA table_info(${table})`).all() as ReferenceRow[]).some(
@@ -93,6 +93,19 @@ const asString = (value: unknown): string => (typeof value === 'string' ? value 
 
 const asOptionalString = (value: unknown): string | undefined =>
   value === null || value === undefined ? undefined : asString(value);
+
+/** Adds session metadata columns to SQLite databases created before aliases and tags existed. */
+const migrateSessionMetadata = (db: DatabaseSync): void => {
+  if (!hasColumn(db, 'reasoning_sessions', 'alias')) {
+    db.exec('ALTER TABLE reasoning_sessions ADD COLUMN alias TEXT');
+  }
+  if (!hasColumn(db, 'reasoning_sessions', 'tags_json')) {
+    db.exec("ALTER TABLE reasoning_sessions ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  db.exec(
+    "UPDATE reasoning_sessions SET tags_json = '[]' WHERE tags_json IS NULL OR TRIM(tags_json) = ''",
+  );
+};
 
 const migratedFormulaId = (
   sourceVertexIds: readonly string[],
@@ -118,7 +131,11 @@ const listEndpointIds = (
       .all(sessionId, edgeId) as ReferenceRow[]
   ).map((row) => asString(row['vertex_id']));
 
-const migratedEdgeId = (originalEdgeId: string, pairIndex: number, used: ReadonlySet<string>): string => {
+const migratedEdgeId = (
+  originalEdgeId: string,
+  pairIndex: number,
+  used: ReadonlySet<string>,
+): string => {
   let attempt = 0;
   for (;;) {
     const suffix = `:split:${pairIndex + 1}${attempt === 0 ? '' : `:${attempt}`}`;
@@ -129,11 +146,7 @@ const migratedEdgeId = (originalEdgeId: string, pairIndex: number, used: Readonl
   }
 };
 
-const migrationDedupeKey = (
-  originalEdgeId: string,
-  pairIndex: number,
-  attempt: number,
-): string => {
+const migrationDedupeKey = (originalEdgeId: string, pairIndex: number, attempt: number): string => {
   const suffix = `:split:${pairIndex + 1}${attempt === 0 ? '' : `:${attempt}`}`;
   return `m:${(originalEdgeId || 'legacy-edge').slice(0, Math.max(1, 400 - 2 - suffix.length))}${suffix}`;
 };
@@ -144,7 +157,8 @@ const reserveDedupeKey = (
   originalEdgeId: string,
   pairIndex: number,
 ): string => {
-  let value = candidate.length <= 400 ? candidate : migrationDedupeKey(originalEdgeId, pairIndex, 0);
+  let value =
+    candidate.length <= 400 ? candidate : migrationDedupeKey(originalEdgeId, pairIndex, 0);
   let attempt = 0;
   while (used.has(value)) {
     attempt += 1;
@@ -221,7 +235,11 @@ const splitLegacyInferenceEdges = (db: DatabaseSync): void => {
       const originalEdgeId = asString(row['edge_id']);
       const sources = listEndpointIds(db, 'edge_sources', sessionId, originalEdgeId);
       const targets = listEndpointIds(db, 'edge_targets', sessionId, originalEdgeId);
-      if (sources.length === 0 || targets.length === 0 || (sources.length === 1 && targets.length === 1)) {
+      if (
+        sources.length === 0 ||
+        targets.length === 0 ||
+        (sources.length === 1 && targets.length === 1)
+      ) {
         plans.push({
           edgeId: originalEdgeId,
           originalEdgeId,
@@ -251,9 +269,7 @@ const splitLegacyInferenceEdges = (db: DatabaseSync): void => {
 
       for (const [pairIndex, pair] of pairs.entries()) {
         const edgeId =
-          pairIndex === 0
-            ? originalEdgeId
-            : migratedEdgeId(originalEdgeId, pairIndex, usedEdgeIds);
+          pairIndex === 0 ? originalEdgeId : migratedEdgeId(originalEdgeId, pairIndex, usedEdgeIds);
         usedEdgeIds.add(edgeId);
         const dedupeKey = reserveDedupeKey(
           expandedEdgeDedupeKey(
@@ -344,7 +360,7 @@ const splitLegacyInferenceEdges = (db: DatabaseSync): void => {
               asOptionalString(question['answered_by_agent']) ?? null,
               asOptionalString(question['answered_at']) ?? null,
               question['answered_at_revision'] === null ||
-              question['answered_at_revision'] === undefined
+                question['answered_at_revision'] === undefined
                 ? null
                 : Number(question['answered_at_revision']),
               Number(question['ordinal']),
@@ -439,7 +455,11 @@ const migrateFormulaIds = (db: DatabaseSync): void => {
     }
 
     for (const bucket of buckets.values()) {
-      const existing = [...new Set(bucket.flatMap((entry) => (entry.formulaId === undefined ? [] : [entry.formulaId])))];
+      const existing = [
+        ...new Set(
+          bucket.flatMap((entry) => (entry.formulaId === undefined ? [] : [entry.formulaId])),
+        ),
+      ];
       const first = bucket[0];
       if (first === undefined) continue;
       const formulaId =
@@ -463,7 +483,9 @@ const migrateFormulaIds = (db: DatabaseSync): void => {
     }
   }
 
-  db.exec('CREATE INDEX IF NOT EXISTS ix_edges_formula_id ON inference_edges (session_id, formula_id)');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS ix_edges_formula_id ON inference_edges (session_id, formula_id)',
+  );
 };
 
 const backfillReferenceIds = (
@@ -527,6 +549,7 @@ export const migrateStorage = (db: DatabaseSync): void => {
   db.exec(migrationSql());
   db.exec('BEGIN IMMEDIATE');
   try {
+    migrateSessionMetadata(db);
     migrateReferenceIds(db);
     // The splitter writes formula_id, so make the column available first.
     migrateFormulaIds(db);

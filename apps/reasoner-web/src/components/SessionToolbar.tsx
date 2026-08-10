@@ -37,6 +37,11 @@ export const SessionToolbar = (): ReactElement => {
       <div className="toolbar-group toolbar-right">
         {session !== undefined && (
           <>
+            {session.alias !== undefined && (
+              <span className="session-toolbar-alias" title={session.sessionId}>
+                {session.alias}
+              </span>
+            )}
             <span className={`chip goal-${session.goalState}`}>{session.goalState}</span>
             <span className="muted small mono">r{session.graphRevision}</span>
             <span className="muted small">#{session.lastEventSeq}</span>

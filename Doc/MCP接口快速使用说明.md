@@ -2,7 +2,7 @@
 
 本文面向调用 InferenceGraph 的 Agent、MCP Host 和运维人员。内容以当前运行中的
 `/health`、`/api/tools` 以及源码中的工具注册和 Zod Schema 为准：服务通过 Streamable HTTP
-提供 21 个 MCP 工具，用于记录、调度和校验证据推理图；服务不会自行生成领域事实或结论。
+提供 23 个 MCP 工具，用于记录、调度和校验证据推理图；服务不会自行生成领域事实或结论。
 
 完整的协议握手、所有字段范围和 Node SDK 示例见
 [MCP 接入与使用指南](MCP接入与使用指南.md)。
@@ -13,6 +13,7 @@
 | ------------------ | --------------------------------------------------------------------------------------------------------- |
 | MCP transport 会话 | HTTP `initialize` 后由服务端发放的 `Mcp-Session-Id`。它只维持客户端与 `/mcp` 的协议连接，服务重启后失效。 |
 | 推理图会话         | `create_reasoning_session` 创建的 `sessionId`。它是持久化的业务任务标识，保存在 SQLite 中。               |
+| 会话元数据         | `alias` 和 `tags` 是会话的人类可读名称与标记；不替代也不改变顶点/边的 `Vn` / `En` 正式索引。              |
 | 顶点               | `Goal`、`State`、`Evidence` 三种结构角色。创建后服务分配稳定的 `V1`、`V2` 等引用。                        |
 | 推理边             | 一条独立的有向关系，创建后服务分配稳定的 `E1`、`E2` 等引用。每条边有自己的状态、证据问题、租约和结论。    |
 | 图版本             | `graphRevision` 是写入图时使用的乐观并发版本；写成功后必须使用响应中的新值继续写。                        |
@@ -66,12 +67,14 @@ DELETE /mcp
 `/api/tools/:tool` 是 Web UI 和诊断脚本可用的直接 JSON bridge，不是 MCP transport。
 MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配置成 MCP 地址。
 
-## 3. 21 个工具如何选择
+## 3. 23 个工具如何选择
 
 | 分组   | 工具                                               | 何时使用                                                               |
 | ------ | -------------------------------------------------- | ---------------------------------------------------------------------- |
-| 会话   | `create_reasoning_session`                         | 创建持久化推理任务，并自动创建唯一的 Goal 顶点。                       |
-| 会话   | `get_reasoning_session`、`list_reasoning_sessions` | 查询一个或多个会话状态、预算和版本。                                   |
+| 会话   | `create_reasoning_session`                         | 创建持久化推理任务、Goal 顶点，并可附带别名和标签。                    |
+| 会话   | `get_reasoning_session`、`list_reasoning_sessions` | 查询一个或多个会话状态、别名、标签、预算和版本。                       |
+| 会话   | `update_reasoning_session_metadata`                | 替换会话别名和标签；不会改变既有 `Vn` / `En`。                         |
+| 会话   | `delete_reasoning_session`                         | 通过版本校验和 `confirm:true` 后删除整个 SQLite 会话图。               |
 | 会话   | `increase_reasoning_session_edge_budget`           | 活动会话的物理边数将超过 `budget.maxEdges` 时，提高上限。              |
 | 会话   | `finish_reasoning_session`                         | 已得到终态后显式结束；会把未完成的 Candidate/Leased 边置为 Abandoned。 |
 | 顶点   | `add_state_vertex`                                 | 写入待推导或已经观察到的状态。                                         |
@@ -98,6 +101,22 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
   "baseGraphRevision": 12
 }
 ```
+
+`delete_reasoning_session` 还必须带 `confirm: true`。删除会级联清理 SQLite 中的会话、顶点、边、事件和上下文投影；JSONL 审计文件保持追加式历史，不会随之删除。
+
+调用 `update_reasoning_session_metadata` 的会话元数据示例：
+
+```json
+{
+  "sessionId": "sched-replay-r2-car1-1786326968949",
+  "agentId": "agent-a",
+  "baseGraphRevision": 12,
+  "alias": "R2 SwapPlan 等待 CAR1",
+  "tags": ["调度", "CAR1", "根因定位"]
+}
+```
+
+将 `alias` 设为 `null` 可清除别名；`delete_reasoning_session` 的调用还需把 `confirm` 设为 `true`。别名和标签只用于会话管理展示，不会改写图中已经分配的 `V1`、`E1` 等正式索引。
 
 ## 4. 图和公式语义
 

@@ -50,8 +50,31 @@ export const SessionBudgetSchema = z.object({
 });
 export type SessionBudget = z.infer<typeof SessionBudgetSchema>;
 
+/** Human-facing metadata. It never replaces the immutable Vn/En references. */
+export const SessionAliasSchema = z.string().trim().min(1).max(120);
+export const SessionTagSchema = z.string().trim().min(1).max(40);
+export const SessionTagListSchema = z
+  .array(SessionTagSchema)
+  .max(12)
+  .superRefine((tags, context) => {
+    const seen = new Set<string>();
+    for (const [index, tag] of tags.entries()) {
+      if (seen.has(tag)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'session tags must be unique',
+          path: [index],
+        });
+      }
+      seen.add(tag);
+    }
+  });
+export const SessionTagsSchema = SessionTagListSchema.default([]);
+
 export const ReasoningSessionSchema = z.object({
   sessionId: SessionIdSchema,
+  alias: SessionAliasSchema.optional(),
+  tags: SessionTagsSchema,
   goalVertexId: VertexIdSchema,
   goalState: GoalStateSchema,
   strategy: SearchStrategySchema,
@@ -69,6 +92,7 @@ export type ReasoningSession = z.infer<typeof ReasoningSessionSchema>;
 
 export const GraphEventKindSchema = z.enum([
   'SessionCreated',
+  'SessionMetadataUpdated',
   'SessionEdgeBudgetIncreased',
   'VertexAdded',
   'EdgeProposed',

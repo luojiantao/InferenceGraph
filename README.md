@@ -28,7 +28,7 @@ InferenceGraph 负责记录和调度推理过程，不负责：
 | 测试          | Vitest `3.2.4`、Playwright `1.57.0`                                        |
 | MCP HTTP 地址 | `http://127.0.0.1:8791/mcp`                                                |
 | Web 开发地址  | `http://127.0.0.1:5174`                                                    |
-| 工具数量      | 21 个（以 `tools/list` 为准）                                              |
+| 工具数量      | 23 个（以 `tools/list` 为准）                                              |
 | 认证          | 当前没有认证层，默认只绑定回环地址                                         |
 | stdio         | 当前没有 stdio server 入口                                                 |
 
@@ -54,7 +54,7 @@ InferenceGraph/
 │   ├── reasoner-schema/       # Zod schema、ID、错误和领域类型
 │   ├── reasoner-core/         # 推理服务、图算法、前沿和上下文投影
 │   ├── reasoner-storage/      # SQLite repository、迁移和 JSONL 审计
-│   ├── reasoner-mcp/          # 21 个 MCP 工具及统一 controller
+│   ├── reasoner-mcp/          # 23 个 MCP 工具及统一 controller
 │   ├── reasoner-logging/      # Pino 文件日志、轮转和脱敏
 │   └── reasoner-test-agent/   # 不访问网络的 BD1 fixture 回放 CLI
 ├── tests/
@@ -118,7 +118,7 @@ curl http://127.0.0.1:8791/health
 预期响应：
 
 ```json
-{ "status": "ok", "tools": 21 }
+{ "status": "ok", "tools": 23 }
 ```
 
 ### 3. 启动 Web UI
@@ -275,7 +275,7 @@ get_reasoning_context / get_context_for_vertex / get_reasoning_text_for_vertex /
 finish_reasoning_session（需要显式结束时）
 ```
 
-写操作都携带 `sessionId`、`agentId` 和调用方观察到的 `baseGraphRevision`。同一事务内的所有事件共享一次 revision，但每个事件拥有不同且连续的 `eventSeq`；增量读取必须使用 `afterEventSeq`，不能把 `graphRevision` 当事件游标。
+除 `create_reasoning_session` 外，写操作都携带 `sessionId`、`agentId` 和调用方观察到的 `baseGraphRevision`。`delete_reasoning_session` 还必须发送 `confirm: true`，并在 Web UI 中输入完整会话 ID 确认；它会级联删除 SQLite 中的图数据，但 JSONL 审计文件仍按追加式策略保留。同一事务内的所有事件共享一次 revision，但每个事件拥有不同且连续的 `eventSeq`；增量读取必须使用 `afterEventSeq`，不能把 `graphRevision` 当事件游标。
 
 领取边时生成租约和执行上下文。完成边必须使用领取返回的 `inputContextHash`，并且所有证据问题都已回答；否则返回 `ContextStale` 或相应的业务错误。重复提交命中 dedupe 时是幂等结果，不会额外消耗 revision。
 
@@ -293,16 +293,18 @@ finish_reasoning_session（需要显式结束时）
 
 ### 会话和顶点
 
-| 工具                       | 作用                                                           | 修改图 |
-| -------------------------- | -------------------------------------------------------------- | ------ |
-| `create_reasoning_session` | 创建会话和 Goal 顶点                                           | 是     |
-| `get_reasoning_session`    | 读取会话状态、策略、预算和 revision                            | 否     |
-| `increase_reasoning_session_edge_budget` | 提高活动会话的物理边预算 `maxEdges`                  | 是     |
-| `list_reasoning_sessions`  | 按最近更新时间列出会话                                         | 否     |
-| `finish_reasoning_session` | 以显式目标状态结束会话，并将 Candidate/Leased 边置为 Abandoned | 是     |
-| `add_state_vertex`         | 添加 State 顶点                                                | 是     |
-| `add_evidence_vertex`      | 添加 Evidence 顶点                                             | 是     |
-| `get_vertex`               | 读取顶点及其入/出边 ID                                         | 否     |
+| 工具                                     | 作用                                                           | 修改图 |
+| ---------------------------------------- | -------------------------------------------------------------- | ------ |
+| `create_reasoning_session`               | 创建会话和 Goal 顶点；可同时设置别名和标签                     | 是     |
+| `get_reasoning_session`                  | 读取会话状态、别名、标签、策略、预算和 revision                | 否     |
+| `update_reasoning_session_metadata`      | 替换会话别名和完整标签列表，不改变 `Vn` / `En`                 | 是     |
+| `delete_reasoning_session`               | 经版本校验和显式确认后删除整个 SQLite 会话图                   | 是     |
+| `increase_reasoning_session_edge_budget` | 提高活动会话的物理边预算 `maxEdges`                            | 是     |
+| `list_reasoning_sessions`                | 按最近更新时间列出会话                                         | 否     |
+| `finish_reasoning_session`               | 以显式目标状态结束会话，并将 Candidate/Leased 边置为 Abandoned | 是     |
+| `add_state_vertex`                       | 添加 State 顶点                                                | 是     |
+| `add_evidence_vertex`                    | 添加 Evidence 顶点                                             | 是     |
+| `get_vertex`                             | 读取顶点及其入/出边 ID                                         | 否     |
 
 ### 推理边和租约
 
@@ -425,7 +427,7 @@ pnpm replay:bd1      # 使用内置 fixture 在内存中回放 DFS/BFS
 
 - 开发页面地址是 `http://127.0.0.1:5174`，不是 `5173`。
 - 确认后端 `8791` 正在运行；Vite 代理依赖该端口。
-- 页面本身是只读观察面；没有会话时，先通过 MCP 的 `create_reasoning_session` 创建会话。
+- Web UI 可新建会话、编辑会话别名和标签，并在确认后删除整个 SQLite 会话图；MCP 仍可用于完整的推理建模和执行。
 - 查看浏览器网络面板和 `data/logs/reasoner-server.log` 中的结构化错误码。
 
 ### 服务启动失败

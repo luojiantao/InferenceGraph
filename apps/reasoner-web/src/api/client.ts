@@ -1,12 +1,18 @@
 import type {
+  CreateReasoningSessionOutput,
+  DeleteReasoningSessionOutput,
   EdgeId,
+  GraphRevision,
   GetContextForEdgeOutput,
   GetContextForVertexOutput,
   GetReasoningContextOutput,
   ListReasoningSessionsOutput,
   SessionId,
+  UpdateReasoningSessionMetadataOutput,
   VertexId,
 } from '@reasoner/schema';
+
+const WEB_AGENT_ID = 'reasoner-web-ui';
 
 /** Structured error surfaced by the server's tool bridge. */
 export interface ReasonerApiError {
@@ -51,6 +57,46 @@ const invokeTool = async <T>(tool: string, input: unknown, signal?: AbortSignal)
 export const reasonerApi = {
   listSessions: (signal?: AbortSignal): Promise<ListReasoningSessionsOutput> =>
     invokeTool('list_reasoning_sessions', { limit: 100, includeFinished: true }, signal),
+
+  createSession: (
+    input: {
+      readonly goalLabel: string;
+      readonly alias?: string;
+      readonly tags: readonly string[];
+    },
+    signal?: AbortSignal,
+  ): Promise<CreateReasoningSessionOutput> =>
+    invokeTool(
+      'create_reasoning_session',
+      {
+        agentId: WEB_AGENT_ID,
+        goalLabel: input.goalLabel,
+        ...(input.alias === undefined ? {} : { alias: input.alias }),
+        tags: input.tags,
+      },
+      signal,
+    ),
+
+  updateSessionMetadata: (
+    input: {
+      readonly sessionId: SessionId;
+      readonly baseGraphRevision: GraphRevision;
+      readonly alias: string | null;
+      readonly tags: readonly string[];
+    },
+    signal?: AbortSignal,
+  ): Promise<UpdateReasoningSessionMetadataOutput> =>
+    invokeTool('update_reasoning_session_metadata', { ...input, agentId: WEB_AGENT_ID }, signal),
+
+  deleteSession: (
+    input: { readonly sessionId: SessionId; readonly baseGraphRevision: GraphRevision },
+    signal?: AbortSignal,
+  ): Promise<DeleteReasoningSessionOutput> =>
+    invokeTool(
+      'delete_reasoning_session',
+      { ...input, agentId: WEB_AGENT_ID, confirm: true },
+      signal,
+    ),
 
   /**
    * Single polling endpoint: snapshot, ordered frontier, state counts and the

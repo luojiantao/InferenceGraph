@@ -9,20 +9,17 @@ import {
   SessionIdSchema,
   VertexIdSchema,
 } from './ids.js';
-import {
-  EdgeStateSchema,
-  InferenceEdgeSchema,
-  VertexKindSchema,
-  VertexSchema,
-} from './graph.js';
+import { EdgeStateSchema, InferenceEdgeSchema, VertexKindSchema, VertexSchema } from './graph.js';
 import {
   GoalStateSchema,
   GraphEventSchema,
   GraphSnapshotSchema,
   ProjectionPolicySchema,
   ReasoningSessionSchema,
+  SessionAliasSchema,
   SearchStrategySchema,
   SessionBudgetSchema,
+  SessionTagListSchema,
 } from './session.js';
 import {
   EdgeExecutionContextSchema,
@@ -46,6 +43,8 @@ const RevisionAck = z.object({
 export const CreateReasoningSessionInputSchema = z.object({
   sessionId: SessionIdSchema.optional(),
   agentId: AgentIdSchema,
+  alias: SessionAliasSchema.optional(),
+  tags: SessionTagListSchema.optional(),
   goalLabel: z.string().min(1).max(400),
   goalPayload: z.record(z.unknown()).default({}),
   strategy: SearchStrategySchema.default('DFS'),
@@ -61,7 +60,28 @@ export const CreateReasoningSessionOutputSchema = z.object({
 export const GetReasoningSessionInputSchema = z.object({ sessionId: SessionIdSchema });
 export const GetReasoningSessionOutputSchema = z.object({ session: ReasoningSessionSchema });
 
-// --- 3. list_reasoning_sessions ---
+// --- 3. update_reasoning_session_metadata ---
+/** Replaces the human-facing alias and full tag list without changing Vn/En. */
+export const UpdateReasoningSessionMetadataInputSchema = WriteCommandBase.extend({
+  /** Use null to clear the alias. */
+  alias: SessionAliasSchema.nullable(),
+  tags: SessionTagListSchema,
+});
+export const UpdateReasoningSessionMetadataOutputSchema = RevisionAck.extend({
+  session: ReasoningSessionSchema,
+});
+
+// --- 4. delete_reasoning_session ---
+export const DeleteReasoningSessionInputSchema = WriteCommandBase.extend({
+  /** Explicitly required because this physically removes the SQLite session graph. */
+  confirm: z.literal(true),
+});
+export const DeleteReasoningSessionOutputSchema = z.object({
+  sessionId: SessionIdSchema,
+  deleted: z.literal(true),
+});
+
+// --- 5. list_reasoning_sessions ---
 export const ListReasoningSessionsInputSchema = z.object({
   includeFinished: z.boolean().default(false),
   limit: z.number().int().positive().max(500).default(100),
@@ -70,7 +90,7 @@ export const ListReasoningSessionsOutputSchema = z.object({
   sessions: z.array(ReasoningSessionSchema),
 });
 
-// --- 4. finish_reasoning_session ---
+// --- 6. finish_reasoning_session ---
 export const FinishReasoningSessionInputSchema = WriteCommandBase.extend({
   goalState: GoalStateSchema,
   reason: z.string().min(1).max(2000),
@@ -81,7 +101,7 @@ export const FinishReasoningSessionOutputSchema = RevisionAck.extend({
   abandonedEdgeIds: z.array(EdgeIdSchema),
 });
 
-// --- 5. increase_reasoning_session_edge_budget ---
+// --- 7. increase_reasoning_session_edge_budget ---
 export const IncreaseReasoningSessionEdgeBudgetInputSchema = WriteCommandBase.extend({
   /** New absolute limit; it must be greater than the current maxEdges value. */
   maxEdges: z.number().int().positive().max(100_000),
@@ -90,7 +110,7 @@ export const IncreaseReasoningSessionEdgeBudgetOutputSchema = RevisionAck.extend
   session: ReasoningSessionSchema,
 });
 
-// --- 6. add_state_vertex ---
+// --- 8. add_state_vertex ---
 export const AddStateVertexInputSchema = WriteCommandBase.extend({
   vertexId: VertexIdSchema.optional(),
   label: z.string().min(1).max(400),
@@ -102,11 +122,11 @@ export const AddStateVertexOutputSchema = RevisionAck.extend({
   deduplicated: z.boolean(),
 });
 
-// --- 6. add_evidence_vertex ---
+// --- 9. add_evidence_vertex ---
 export const AddEvidenceVertexInputSchema = AddStateVertexInputSchema;
 export const AddEvidenceVertexOutputSchema = AddStateVertexOutputSchema;
 
-// --- 7. get_vertex ---
+// --- 10. get_vertex ---
 export const GetVertexInputSchema = z.object({
   sessionId: SessionIdSchema,
   vertexId: VertexIdSchema,
@@ -117,7 +137,7 @@ export const GetVertexOutputSchema = z.object({
   outgoingEdgeIds: z.array(EdgeIdSchema),
 });
 
-// --- 8. propose_inference_edge ---
+// --- 11. propose_inference_edge ---
 export const ProposeInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema.optional(),
   /**
@@ -148,14 +168,14 @@ export const ProposeInferenceEdgeOutputSchema = RevisionAck.extend({
   deduplicated: z.boolean(),
 });
 
-// --- 9. get_inference_edge ---
+// --- 12. get_inference_edge ---
 export const GetInferenceEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
 });
 export const GetInferenceEdgeOutputSchema = z.object({ edge: InferenceEdgeSchema });
 
-// --- 10. list_candidate_edges ---
+// --- 13. list_candidate_edges ---
 export const ListCandidateEdgesInputSchema = z.object({
   sessionId: SessionIdSchema,
   strategy: SearchStrategySchema.optional(),
@@ -167,7 +187,7 @@ export const ListCandidateEdgesOutputSchema = z.object({
   graphRevision: GraphRevisionSchema,
 });
 
-// --- 11. claim_inference_edge ---
+// --- 14. claim_inference_edge ---
 export const ClaimInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseSeconds: z.number().int().positive().max(86_400).optional(),
@@ -178,7 +198,7 @@ export const ClaimInferenceEdgeOutputSchema = RevisionAck.extend({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 12. claim_inference_edges ---
+// --- 15. claim_inference_edges ---
 export const ClaimInferenceEdgesInputSchema = WriteCommandBase.extend({
   maxEdges: z.number().int().positive().max(50).default(5),
   strategy: SearchStrategySchema.optional(),
@@ -194,7 +214,7 @@ export const ClaimInferenceEdgesOutputSchema = RevisionAck.extend({
   ),
 });
 
-// --- 13. release_inference_edge ---
+// --- 16. release_inference_edge ---
 export const ReleaseInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema,
@@ -204,7 +224,7 @@ export const ReleaseInferenceEdgeOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 14. answer_evidence_question ---
+// --- 17. answer_evidence_question ---
 export const AnswerEvidenceQuestionInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   questionId: QuestionIdSchema,
@@ -215,7 +235,7 @@ export const AnswerEvidenceQuestionOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 15. complete_inference_edge ---
+// --- 18. complete_inference_edge ---
 export const CompleteInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema,
@@ -229,7 +249,7 @@ export const CompleteInferenceEdgeOutputSchema = RevisionAck.extend({
   session: ReasoningSessionSchema,
 });
 
-// --- 16. block_inference_edge ---
+// --- 19. block_inference_edge ---
 export const BlockInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema.optional(),
@@ -239,7 +259,7 @@ export const BlockInferenceEdgeOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 17. get_context_for_vertex ---
+// --- 20. get_context_for_vertex ---
 export const GetContextForVertexInputSchema = z.object({
   sessionId: SessionIdSchema,
   vertexId: VertexIdSchema,
@@ -250,11 +270,11 @@ export const GetContextForVertexOutputSchema = z.object({
   context: VertexExpansionContextSchema,
 });
 
-// --- 18. get_reasoning_text_for_vertex ---
+// --- 21. get_reasoning_text_for_vertex ---
 export const GetReasoningTextForVertexInputSchema = GetContextForVertexInputSchema;
 export const GetReasoningTextForVertexOutputSchema = VertexReasoningTextSchema;
 
-// --- 19. get_context_for_edge ---
+// --- 22. get_context_for_edge ---
 export const GetContextForEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
@@ -265,7 +285,7 @@ export const GetContextForEdgeOutputSchema = z.object({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 20. get_reasoning_context ---
+// --- 23. get_reasoning_context ---
 /**
  * Session-level read-only overview. It deliberately returns neither a single
  * vertex payload nor a single edge payload; use the entity context tools for those.
@@ -290,6 +310,14 @@ export type CreateReasoningSessionInput = z.infer<typeof CreateReasoningSessionI
 export type CreateReasoningSessionOutput = z.infer<typeof CreateReasoningSessionOutputSchema>;
 export type GetReasoningSessionInput = z.infer<typeof GetReasoningSessionInputSchema>;
 export type GetReasoningSessionOutput = z.infer<typeof GetReasoningSessionOutputSchema>;
+export type UpdateReasoningSessionMetadataInput = z.infer<
+  typeof UpdateReasoningSessionMetadataInputSchema
+>;
+export type UpdateReasoningSessionMetadataOutput = z.infer<
+  typeof UpdateReasoningSessionMetadataOutputSchema
+>;
+export type DeleteReasoningSessionInput = z.infer<typeof DeleteReasoningSessionInputSchema>;
+export type DeleteReasoningSessionOutput = z.infer<typeof DeleteReasoningSessionOutputSchema>;
 export type ListReasoningSessionsInput = z.infer<typeof ListReasoningSessionsInputSchema>;
 export type ListReasoningSessionsOutput = z.infer<typeof ListReasoningSessionsOutputSchema>;
 export type FinishReasoningSessionInput = z.infer<typeof FinishReasoningSessionInputSchema>;

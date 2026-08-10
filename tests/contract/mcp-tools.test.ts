@@ -35,6 +35,8 @@ const newController = () => {
 const EXPECTED_TOOLS = [
   'create_reasoning_session',
   'get_reasoning_session',
+  'update_reasoning_session_metadata',
+  'delete_reasoning_session',
   'increase_reasoning_session_edge_budget',
   'list_reasoning_sessions',
   'finish_reasoning_session',
@@ -57,11 +59,11 @@ const EXPECTED_TOOLS = [
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 21 agreed tools', () => {
+  it('exposes exactly the 23 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(21);
+    expect(names).toHaveLength(23);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -216,6 +218,66 @@ describe('MCP input validation', () => {
     storage.close();
   });
 
+  it('creates, updates and deletes complete session records with revision protection', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'metadata goal',
+      alias: 'CAR1 调度阻塞',
+      tags: ['调度', 'CAR1'],
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const createdOut = created.value as {
+      session: { sessionId: string; graphRevision: number; alias?: string; tags: string[] };
+    };
+    expect(createdOut.session.alias).toBe('CAR1 调度阻塞');
+    expect(createdOut.session.tags).toEqual(['调度', 'CAR1']);
+
+    const updated = await controller.invoke('update_reasoning_session_metadata', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: createdOut.session.graphRevision,
+      agentId: 'agent-a',
+      alias: 'CAR1 回放',
+      tags: ['回放', '阻塞定位'],
+    });
+    if (!isOk(updated)) throw new Error('metadata update failed');
+    const updatedOut = updated.value as {
+      graphRevision: number;
+      session: { alias?: string; tags: string[] };
+    };
+    expect(updatedOut.session.alias).toBe('CAR1 回放');
+    expect(updatedOut.session.tags).toEqual(['回放', '阻塞定位']);
+
+    const staleDelete = await controller.invoke('delete_reasoning_session', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: createdOut.session.graphRevision,
+      agentId: 'agent-a',
+      confirm: true,
+    });
+    expect(isErr(staleDelete)).toBe(true);
+    if (isErr(staleDelete)) expect(staleDelete.error.code).toBe('RevisionConflict');
+
+    const deleted = await controller.invoke('delete_reasoning_session', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: updatedOut.graphRevision,
+      agentId: 'agent-a',
+      confirm: true,
+    });
+    expect(isOk(deleted)).toBe(true);
+    if (isOk(deleted))
+      expect(deleted.value).toEqual({
+        sessionId: createdOut.session.sessionId,
+        deleted: true,
+      });
+
+    const missing = await controller.invoke('get_reasoning_session', {
+      sessionId: createdOut.session.sessionId,
+    });
+    expect(isErr(missing)).toBe(true);
+    if (isErr(missing)) expect(missing.error.code).toBe('SessionNotFound');
+    storage.close();
+  });
+
   it('resolves session-local Vn and En references in MCP tool inputs', async () => {
     const { controller, storage } = newController();
     const created = await controller.invoke('create_reasoning_session', {
@@ -346,9 +408,7 @@ describe('MCP input validation', () => {
     expect(output.edge.referenceId).toBe('E1');
     expect(output.edges.map((edge) => edge.referenceId)).toEqual(['E1', 'E2', 'E3']);
     expect(new Set(output.edges.map((edge) => edge.formulaId)).size).toBe(1);
-    expect(
-      output.edges.map((edge) => [edge.sourceVertexIds, edge.targetVertexIds]),
-    ).toEqual(
+    expect(output.edges.map((edge) => [edge.sourceVertexIds, edge.targetVertexIds])).toEqual(
       premiseVertexIds.map((vertexId) => [[vertexId], [createdOut.goalVertex.vertexId]]),
     );
     expect(output.edges.map((edge) => edge.evidenceQuestions.length)).toEqual([1, 1, 1]);

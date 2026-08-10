@@ -56,6 +56,21 @@ afterEach(() => {
 });
 
 describe('storage: persisted reference ids', () => {
+  it('adds empty alias and tag metadata to legacy session rows', () => {
+    const { db } = createLegacyDatabase();
+    db.prepare('INSERT INTO reasoning_sessions (session_id) VALUES (?)').run('legacy-session');
+
+    migrateStorage(db);
+    migrateStorage(db);
+
+    expect(
+      db
+        .prepare('SELECT session_id, alias, tags_json FROM reasoning_sessions WHERE session_id = ?')
+        .get('legacy-session'),
+    ).toEqual({ session_id: 'legacy-session', alias: null, tags_json: '[]' });
+    db.close();
+  });
+
   it('backfills pre-reference databases once in creation order', () => {
     const { db } = createLegacyDatabase();
     const sessionId = 'legacy-session';
@@ -229,7 +244,9 @@ describe('storage: persisted reference ids', () => {
     ]);
     expect(
       db
-        .prepare('SELECT edge_id, question_id FROM evidence_questions WHERE session_id = ? ORDER BY edge_id')
+        .prepare(
+          'SELECT edge_id, question_id FROM evidence_questions WHERE session_id = ? ORDER BY edge_id',
+        )
         .all(sessionId),
     ).toHaveLength(3);
     expect(

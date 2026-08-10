@@ -7,6 +7,7 @@ import {
   ClaimInferenceEdgesInputSchema,
   CompleteInferenceEdgeInputSchema,
   CreateReasoningSessionInputSchema,
+  DeleteReasoningSessionInputSchema,
   FinishReasoningSessionInputSchema,
   GetContextForEdgeInputSchema,
   GetContextForVertexInputSchema,
@@ -21,6 +22,7 @@ import {
   ProposeInferenceEdgeInputSchema,
   ReleaseInferenceEdgeInputSchema,
   AnswerEvidenceQuestionInputSchema,
+  UpdateReasoningSessionMetadataInputSchema,
   err,
   isErr,
   NULL_LOGGER,
@@ -152,6 +154,24 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: false,
       inputSchema: GetReasoningSessionInputSchema,
       handler: (input) => service.getReasoningSession(input),
+    }),
+    define({
+      name: 'update_reasoning_session_metadata',
+      title: 'Update reasoning session metadata',
+      description:
+        'Replaces a session alias and tags without changing any immutable Vn or En graph reference.',
+      mutating: true,
+      inputSchema: UpdateReasoningSessionMetadataInputSchema,
+      handler: (input) => service.updateReasoningSessionMetadata(input),
+    }),
+    define({
+      name: 'delete_reasoning_session',
+      title: 'Delete reasoning session',
+      description:
+        'Permanently deletes the SQLite session graph after revision verification and explicit confirmation. Existing append-only JSONL audit files are retained.',
+      mutating: true,
+      inputSchema: DeleteReasoningSessionInputSchema,
+      handler: (input) => service.deleteReasoningSession(input),
     }),
     define({
       name: 'increase_reasoning_session_edge_budget',

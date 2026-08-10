@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS reasoning_sessions (
   last_event_seq     INTEGER NOT NULL DEFAULT 0,
   structural_error   TEXT,
   finished_reason    TEXT,
+  -- Human-facing session metadata; graph Vn/En references remain immutable.
+  alias              TEXT,
+  tags_json          TEXT NOT NULL DEFAULT '[]',
   created_by_agent   TEXT NOT NULL,
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL

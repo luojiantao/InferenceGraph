@@ -19,6 +19,8 @@ import {
   type CompleteInferenceEdgeOutput,
   type CreateReasoningSessionInput,
   type CreateReasoningSessionOutput,
+  type DeleteReasoningSessionInput,
+  type DeleteReasoningSessionOutput,
   type EdgeId,
   type EdgeExecutionContext,
   type EdgeReferenceId,
@@ -60,6 +62,8 @@ import {
   type Result,
   type SearchStrategy,
   type SessionId,
+  type UpdateReasoningSessionMetadataInput,
+  type UpdateReasoningSessionMetadataOutput,
   type Vertex,
   type VertexReferenceId,
   type VertexExpansionContext,
@@ -145,6 +149,9 @@ const nextVertexReferenceId = (vertices: readonly Vertex[]): VertexReferenceId =
 const isReservedReferenceId = (value: string, prefix: 'V' | 'E'): boolean =>
   new RegExp(`^${prefix}[1-9][0-9]*$`).test(value);
 
+const sameStringList = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
 interface EdgeEndpoints {
   readonly sourceVertexId: VertexId;
   readonly targetVertexId: VertexId;
@@ -183,6 +190,7 @@ export class ReasonerService {
     const sessionId = (input.sessionId ?? this.deps.ids.newId('session')) as SessionId;
     const goalVertexId = this.deps.ids.newId('vertex') as VertexId;
     const initialRevision = 1 as GraphRevision;
+    const tags = input.tags ?? [];
 
     const goalVertex: Vertex = {
       vertexId: goalVertexId,
@@ -198,6 +206,8 @@ export class ReasonerService {
 
     const session: ReasoningSession = {
       sessionId,
+      alias: input.alias,
+      tags: [...tags],
       goalVertexId,
       goalState: 'Exploring',
       strategy: input.strategy,
@@ -221,7 +231,11 @@ export class ReasonerService {
         {
           kind: 'SessionCreated',
           actorAgentId: input.agentId,
-          detail: { goalLabel: input.goalLabel },
+          detail: {
+            goalLabel: input.goalLabel,
+            alias: input.alias ?? null,
+            tags,
+          },
         },
         { kind: 'VertexAdded', actorAgentId: input.agentId, vertexId: goalVertexId },
       ],
@@ -239,6 +253,58 @@ export class ReasonerService {
     return isErr(session) ? session : ok({ session: session.value });
   }
 
+  /** Replaces the session's human-facing metadata without changing graph entities or Vn/En. */
+  async updateReasoningSessionMetadata(
+    input: UpdateReasoningSessionMetadataInput,
+  ): Promise<Result<UpdateReasoningSessionMetadataOutput>> {
+    let changed = false;
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot) => {
+        const alias = input.alias ?? undefined;
+        const aliasChanged = snapshot.session.alias !== alias;
+        const tagsChanged = !sameStringList(snapshot.session.tags, input.tags);
+        if (!aliasChanged && !tagsChanged) return ok<MutationDraft>({ events: [] });
+
+        changed = true;
+        return ok<MutationDraft>({
+          sessionPatch: { alias: input.alias, tags: [...input.tags] },
+          events: [
+            {
+              kind: 'SessionMetadataUpdated',
+              actorAgentId: input.agentId,
+              detail: { alias: alias ?? null, tags: input.tags },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+
+    if (changed) await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    return ok({
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      session: outcome.value.snapshot.session,
+    });
+  }
+
+  /** Deletes the SQLite session graph after a caller-confirmed revision compare-and-set. */
+  async deleteReasoningSession(
+    input: DeleteReasoningSessionInput,
+  ): Promise<Result<DeleteReasoningSessionOutput>> {
+    const deleted = await this.deps.repository.deleteSession(
+      input.sessionId,
+      input.baseGraphRevision,
+    );
+    if (isErr(deleted)) return deleted;
+
+    // JSONL is append-only, so historical audit files intentionally remain available.
+    this.log.info({ sessionId: input.sessionId, actorAgentId: input.agentId }, 'session deleted');
+    return ok({ sessionId: input.sessionId, deleted: true });
+  }
+
   /** Raises an active session's physical-edge budget without changing other limits. */
   async increaseReasoningSessionEdgeBudget(
     input: IncreaseReasoningSessionEdgeBudgetInput,
@@ -252,11 +318,10 @@ export class ReasonerService {
 
         const fromMaxEdges = snapshot.session.budget.maxEdges;
         if (input.maxEdges <= fromMaxEdges) {
-          return err(
-            'InvalidInput',
-            `maxEdges must increase from ${fromMaxEdges}`,
-            { fromMaxEdges, requestedMaxEdges: input.maxEdges },
-          );
+          return err('InvalidInput', `maxEdges must increase from ${fromMaxEdges}`, {
+            fromMaxEdges,
+            requestedMaxEdges: input.maxEdges,
+          });
         }
         if (input.maxEdges < snapshot.edges.length) {
           return err(
@@ -616,9 +681,7 @@ export class ReasonerService {
           created.push(edge);
         }
 
-        const createdByDedupeKey = new Map(
-          created.map((edge) => [edge.dedupeKey as string, edge]),
-        );
+        const createdByDedupeKey = new Map(created.map((edge) => [edge.dedupeKey as string, edge]));
         resolved = candidates.flatMap((candidate) => {
           const edge =
             existingByDedupeKey.get(candidate.dedupeKey) ??
@@ -639,7 +702,8 @@ export class ReasonerService {
     );
     if (isErr(outcome)) return outcome;
     const firstEdge = resolved[0];
-    if (firstEdge === undefined) return err('StorageFailure', 'edge planner did not produce an edge');
+    if (firstEdge === undefined)
+      return err('StorageFailure', 'edge planner did not produce an edge');
 
     await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
     return ok({

@@ -77,8 +77,9 @@ export class SqliteReasonerRepository implements ReasonerRepository {
           `INSERT INTO reasoning_sessions (
              session_id, goal_vertex_id, goal_state, strategy, projection_policy,
              max_edges, max_depth, max_lease_seconds, graph_revision, last_event_seq,
-             structural_error, finished_reason, created_by_agent, created_at, updated_at
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             structural_error, finished_reason, alias, tags_json,
+             created_by_agent, created_at, updated_at
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           session.sessionId,
@@ -93,6 +94,8 @@ export class SqliteReasonerRepository implements ReasonerRepository {
           0,
           null,
           null,
+          session.alias ?? null,
+          JSON.stringify(session.tags),
           session.createdByAgentId,
           session.createdAt,
           session.updatedAt,
@@ -137,10 +140,10 @@ export class SqliteReasonerRepository implements ReasonerRepository {
 
   async listSessions(options: ListSessionsOptions): Promise<Result<readonly ReasoningSession[]>> {
     const sql = options.includeFinished
-      ? 'SELECT * FROM reasoning_sessions ORDER BY created_at DESC LIMIT ?'
+      ? 'SELECT * FROM reasoning_sessions ORDER BY updated_at DESC, created_at DESC LIMIT ?'
       : `SELECT * FROM reasoning_sessions
          WHERE goal_state NOT IN ('GoalSatisfied','GoalConflicted','Exhausted','BudgetExceeded','StructurallyInvalid')
-         ORDER BY created_at DESC LIMIT ?`;
+         ORDER BY updated_at DESC, created_at DESC LIMIT ?`;
     const rows = this.db.prepare(sql).all(options.limit) as Row[];
     const sessions: ReasoningSession[] = [];
     for (const row of rows) {
@@ -273,16 +276,20 @@ export class SqliteReasonerRepository implements ReasonerRepository {
       }
 
       const patch = draft.value.sessionPatch;
+      const hasAliasPatch = patch !== undefined && 'alias' in patch;
+      const hasTagsPatch = patch !== undefined && 'tags' in patch;
       this.db
         .prepare(
           `UPDATE reasoning_sessions
              SET graph_revision = ?, updated_at = ?,
                   max_edges = COALESCE(?, max_edges),
                   goal_state = COALESCE(?, goal_state),
-                 strategy = COALESCE(?, strategy),
-                 projection_policy = COALESCE(?, projection_policy),
-                 structural_error = COALESCE(?, structural_error),
-                 finished_reason = COALESCE(?, finished_reason)
+                  strategy = COALESCE(?, strategy),
+                  projection_policy = COALESCE(?, projection_policy),
+                  structural_error = COALESCE(?, structural_error),
+                  finished_reason = COALESCE(?, finished_reason),
+                  alias = CASE WHEN ? THEN ? ELSE alias END,
+                  tags_json = CASE WHEN ? THEN ? ELSE tags_json END
            WHERE session_id = ?`,
         )
         .run(
@@ -294,6 +301,10 @@ export class SqliteReasonerRepository implements ReasonerRepository {
           patch?.projectionPolicy ?? null,
           patch?.structuralError ?? null,
           patch?.finishedReason ?? null,
+          hasAliasPatch ? 1 : 0,
+          hasAliasPatch ? (patch?.alias ?? null) : null,
+          hasTagsPatch ? 1 : 0,
+          hasTagsPatch ? JSON.stringify(patch?.tags ?? []) : null,
           sessionId,
         );
 
@@ -327,6 +338,59 @@ export class SqliteReasonerRepository implements ReasonerRepository {
         'mutation threw',
       );
       return err('StorageFailure', `mutation failed: ${String(cause)}`);
+    }
+  }
+
+  async deleteSession(
+    sessionId: SessionId,
+    expectedRevision: GraphRevision,
+  ): Promise<Result<void>> {
+    let committed = false;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      const row = this.db
+        .prepare('SELECT graph_revision FROM reasoning_sessions WHERE session_id = ?')
+        .get(sessionId) as Row | undefined;
+      if (row === undefined) {
+        this.db.exec('ROLLBACK');
+        return err('SessionNotFound', `session ${sessionId} not found`, { sessionId });
+      }
+
+      const actual = asNumber(row['graph_revision']) as GraphRevision;
+      if (actual !== expectedRevision) {
+        this.db.exec('ROLLBACK');
+        return err(
+          'RevisionConflict',
+          `session ${sessionId} is at revision ${actual}, caller sent ${expectedRevision}`,
+          { actual, expected: expectedRevision },
+        );
+      }
+
+      // Do this explicitly as well as relying on ON DELETE CASCADE: databases
+      // upgraded from the earliest schema may not have had every foreign key.
+      for (const table of [
+        'context_projections',
+        'graph_events',
+        'edge_leases',
+        'evidence_questions',
+        'edge_sources',
+        'edge_targets',
+        'inference_edges',
+        'vertices',
+      ]) {
+        this.db.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
+      }
+      this.db.prepare('DELETE FROM reasoning_sessions WHERE session_id = ?').run(sessionId);
+      this.db.exec('COMMIT');
+      committed = true;
+      return ok(undefined);
+    } catch (cause) {
+      if (!committed) this.safeRollback();
+      this.log.error(
+        { sessionId, expectedRevision, err: cause, rolledBack: !committed },
+        'session deletion threw',
+      );
+      return err('StorageFailure', `failed to delete session: ${String(cause)}`);
     }
   }
 
@@ -424,8 +488,17 @@ export class SqliteReasonerRepository implements ReasonerRepository {
   }
 
   private parseSession(row: Row): Result<ReasoningSession> {
+    let tags: unknown;
+    try {
+      tags = JSON.parse(asString(row['tags_json'] ?? '[]'));
+    } catch (cause) {
+      return err('StorageFailure', `corrupt session tags_json: ${String(cause)}`);
+    }
+
     const parsed = ReasoningSessionSchema.safeParse({
       sessionId: asString(row['session_id']),
+      alias: asOptionalString(row['alias']),
+      tags,
       goalVertexId: asString(row['goal_vertex_id']),
       goalState: asString(row['goal_state']),
       strategy: asString(row['strategy']),
