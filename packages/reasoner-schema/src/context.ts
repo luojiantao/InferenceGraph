@@ -54,6 +54,37 @@ export const VertexExpansionContextSchema = z.object({
 });
 export type VertexExpansionContext = z.infer<typeof VertexExpansionContextSchema>;
 
+/**
+ * One deterministic downstream route from the current vertex to the session
+ * Goal. This is navigation context, not proof: a physical edge can belong to
+ * an AND formula whose other premises are not part of this linear path.
+ */
+export const GoalPathSummarySchema = z.object({
+  reachable: z.boolean(),
+  hopCount: z.number().int().nonnegative().nullable(),
+  /** Ordered from the current vertex to the Goal; empty when unreachable. */
+  vertices: z.array(VertexSchema),
+  /** Ordered to connect adjacent vertices; empty when unreachable or already at Goal. */
+  edges: z.array(InferenceEdgeSchema),
+});
+export type GoalPathSummary = z.infer<typeof GoalPathSummarySchema>;
+
+/** Payload returned by get_downstream_context_for_vertex. */
+export const VertexDownstreamContextSchema = z.object({
+  sessionId: SessionIdSchema,
+  vertexId: VertexIdSchema,
+  graphRevision: GraphRevisionSchema,
+  currentVertex: VertexSchema,
+  goalVertex: VertexSchema,
+  /** Every persisted physical edge that directly consumes the current vertex. */
+  directDownstreamEdges: z.array(InferenceEdgeSchema),
+  /** Deduplicated targets of directDownstreamEdges. */
+  directDownstreamVertices: z.array(VertexSchema),
+  /** Shortest retained recorded route to Goal; it does not imply completed support. */
+  goalPathSummary: GoalPathSummarySchema,
+});
+export type VertexDownstreamContext = z.infer<typeof VertexDownstreamContextSchema>;
+
 /** Human-readable rendering of a vertex dependency projection. */
 export const VertexReasoningTextSchema = z.object({
   context: VertexExpansionContextSchema,

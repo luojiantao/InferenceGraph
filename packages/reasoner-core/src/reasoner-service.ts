@@ -31,6 +31,8 @@ import {
   type GetContextForEdgeOutput,
   type GetContextForVertexInput,
   type GetContextForVertexOutput,
+  type GetDownstreamContextForVertexInput,
+  type GetDownstreamContextForVertexOutput,
   type GetInferenceEdgeInput,
   type GetInferenceEdgeOutput,
   type GetReasoningContextInput,
@@ -112,6 +114,7 @@ import {
 import {
   computeEdgeContextHash,
   projectEdgeContext,
+  projectVertexDownstreamContext,
   projectVertexContext,
 } from './context-projector.js';
 import { renderVertexReasoningContext } from './reasoning-context-renderer.js';
@@ -1543,6 +1546,17 @@ export class ReasonerService {
     await this.archiveVertexProjection(snapshot.value, input.vertexId, policy, context.value);
 
     return ok({ context: context.value });
+  }
+
+  /** Returns direct consumers plus one shortest recorded route from a vertex to the Goal. */
+  async getDownstreamContextForVertex(
+    input: GetDownstreamContextForVertexInput,
+  ): Promise<Result<GetDownstreamContextForVertexOutput>> {
+    const snapshot = await this.deps.repository.getSnapshot(input.sessionId);
+    if (isErr(snapshot)) return snapshot;
+
+    const context = projectVertexDownstreamContext(snapshot.value, input.vertexId);
+    return isErr(context) ? context : ok({ context: context.value });
   }
 
   /** Renders the same audited vertex projection as Markdown reasoning text and Mermaid. */

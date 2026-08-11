@@ -11,6 +11,7 @@ import {
   FinishReasoningSessionInputSchema,
   GetContextForEdgeInputSchema,
   GetContextForVertexInputSchema,
+  GetDownstreamContextForVertexInputSchema,
   GetInferenceEdgeInputSchema,
   GetReasoningContextInputSchema,
   GetReasoningSessionInputSchema,
@@ -69,6 +70,7 @@ const VERTEX_REFERENCE_TOOLS = new Set([
   'update_vertex',
   'propose_inference_edge',
   'get_context_for_vertex',
+  'get_downstream_context_for_vertex',
   'get_reasoning_text_for_vertex',
 ]);
 
@@ -333,6 +335,15 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: false,
       inputSchema: GetContextForVertexInputSchema,
       handler: (input) => service.getContextForVertex(input),
+    }),
+    define({
+      name: 'get_downstream_context_for_vertex',
+      title: 'Get downstream context for vertex',
+      description:
+        'Returns every direct outgoing inference edge and target vertex, plus one deterministic shortest retained route from the current vertex to the session Goal. The route is navigation context and does not imply that its edges are completed. vertexId accepts a canonical id or session-local Vn reference.',
+      mutating: false,
+      inputSchema: GetDownstreamContextForVertexInputSchema,
+      handler: (input) => service.getDownstreamContextForVertex(input),
     }),
     define({
       name: 'get_reasoning_text_for_vertex',

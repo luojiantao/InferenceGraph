@@ -55,17 +55,18 @@ const EXPECTED_TOOLS = [
   'complete_inference_edge',
   'block_inference_edge',
   'get_context_for_vertex',
+  'get_downstream_context_for_vertex',
   'get_reasoning_text_for_vertex',
   'get_context_for_edge',
   'get_reasoning_context',
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 25 agreed tools', () => {
+  it('exposes exactly the 26 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(25);
+    expect(names).toHaveLength(26);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -89,6 +90,7 @@ describe('MCP tool surface', () => {
       'get_inference_edge',
       'list_candidate_edges',
       'get_context_for_vertex',
+      'get_downstream_context_for_vertex',
       'get_reasoning_text_for_vertex',
       'get_context_for_edge',
       'get_reasoning_context',
@@ -341,7 +343,10 @@ describe('MCP input validation', () => {
       label: 'premise implies conclusion',
     });
     if (!isOk(proposed)) throw new Error('edge proposal failed');
-    const proposedOut = proposed.value as { edge: { edgeId: string; referenceId: string } };
+    const proposedOut = proposed.value as {
+      graphRevision: number;
+      edge: { edgeId: string; referenceId: string };
+    };
     expect(proposedOut.edge.referenceId).toBe('E1');
 
     const edge = await controller.invoke('get_inference_edge', {
@@ -353,6 +358,51 @@ describe('MCP input validation', () => {
       expect((edge.value as { edge: { edgeId: string } }).edge.edgeId).toBe(
         proposedOut.edge.edgeId,
       );
+    }
+
+    const goalEdge = await controller.invoke('propose_inference_edge', {
+      sessionId: session.sessionId,
+      baseGraphRevision: proposedOut.graphRevision,
+      agentId: 'agent-a',
+      sourceVertexIds: ['V3'],
+      targetVertexIds: ['V1'],
+      label: 'conclusion implies goal',
+    });
+    if (!isOk(goalEdge)) throw new Error('goal edge proposal failed');
+
+    const downstream = await controller.invoke('get_downstream_context_for_vertex', {
+      sessionId: session.sessionId,
+      vertexId: 'V2',
+    });
+    expect(isOk(downstream)).toBe(true);
+    if (isOk(downstream)) {
+      const context = (
+        downstream.value as {
+          context: {
+            currentVertex: { vertexId: string };
+            directDownstreamVertices: Array<{ vertexId: string }>;
+            directDownstreamEdges: Array<{ referenceId: string }>;
+            goalPathSummary: {
+              reachable: boolean;
+              hopCount: number | null;
+              vertices: Array<{ referenceId: string }>;
+              edges: Array<{ referenceId: string }>;
+            };
+          };
+        }
+      ).context;
+      expect(context.currentVertex.vertexId).toBe(premiseOut.vertex.vertexId);
+      expect(context.directDownstreamVertices.map((item) => item.vertexId)).toEqual([
+        conclusionOut.vertex.vertexId,
+      ]);
+      expect(context.directDownstreamEdges.map((item) => item.referenceId)).toEqual(['E1']);
+      expect(context.goalPathSummary).toMatchObject({ reachable: true, hopCount: 2 });
+      expect(context.goalPathSummary.vertices.map((item) => item.referenceId)).toEqual([
+        'V2',
+        'V3',
+        'V1',
+      ]);
+      expect(context.goalPathSummary.edges.map((item) => item.referenceId)).toEqual(['E1', 'E2']);
     }
 
     storage.close();

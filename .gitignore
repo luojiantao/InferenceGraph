@@ -12,6 +12,9 @@ playwright-report/
 blob-report/
 .vitest/
 
+# Local inspection export; keep it in the working tree only.
+ctc-e84-20260810-diagnosis-full-graph.md
+
 .DS_Store
 Thumbs.db
 *.log

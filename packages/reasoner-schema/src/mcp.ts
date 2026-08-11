@@ -23,6 +23,7 @@ import {
 } from './session.js';
 import {
   EdgeExecutionContextSchema,
+  VertexDownstreamContextSchema,
   VertexExpansionContextSchema,
   VertexReasoningTextSchema,
 } from './context.js';
@@ -305,11 +306,20 @@ export const GetContextForVertexOutputSchema = z.object({
   context: VertexExpansionContextSchema,
 });
 
-// --- 21. get_reasoning_text_for_vertex ---
+// --- 21. get_downstream_context_for_vertex ---
+export const GetDownstreamContextForVertexInputSchema = z.object({
+  sessionId: SessionIdSchema,
+  vertexId: VertexIdSchema,
+});
+export const GetDownstreamContextForVertexOutputSchema = z.object({
+  context: VertexDownstreamContextSchema,
+});
+
+// --- 22. get_reasoning_text_for_vertex ---
 export const GetReasoningTextForVertexInputSchema = GetContextForVertexInputSchema;
 export const GetReasoningTextForVertexOutputSchema = VertexReasoningTextSchema;
 
-// --- 22. get_context_for_edge ---
+// --- 23. get_context_for_edge ---
 export const GetContextForEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
@@ -320,7 +330,7 @@ export const GetContextForEdgeOutputSchema = z.object({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 23. get_reasoning_context ---
+// --- 24. get_reasoning_context ---
 /**
  * Session-level read-only overview. It deliberately returns neither a single
  * vertex payload nor a single edge payload; use the entity context tools for those.
@@ -394,6 +404,12 @@ export type BlockInferenceEdgeInput = z.infer<typeof BlockInferenceEdgeInputSche
 export type BlockInferenceEdgeOutput = z.infer<typeof BlockInferenceEdgeOutputSchema>;
 export type GetContextForVertexInput = z.infer<typeof GetContextForVertexInputSchema>;
 export type GetContextForVertexOutput = z.infer<typeof GetContextForVertexOutputSchema>;
+export type GetDownstreamContextForVertexInput = z.infer<
+  typeof GetDownstreamContextForVertexInputSchema
+>;
+export type GetDownstreamContextForVertexOutput = z.infer<
+  typeof GetDownstreamContextForVertexOutputSchema
+>;
 export type GetReasoningTextForVertexInput = z.infer<typeof GetReasoningTextForVertexInputSchema>;
 export type GetReasoningTextForVertexOutput = z.infer<typeof GetReasoningTextForVertexOutputSchema>;
 export type GetContextForEdgeInput = z.infer<typeof GetContextForEdgeInputSchema>;

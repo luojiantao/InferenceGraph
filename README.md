@@ -2,7 +2,7 @@
 
 InferenceGraph 是一个本地优先的证据图推理协调服务。它把多个 Agent 提交的目标、状态、证据和推理关系保存为有向超图，并负责并发协调、上下文一致性、结构校验和审计追踪。
 
-当前仓库版本为 `0.1.0`。本文档只描述源码中已经实现的行为；MCP 参数的完整 schema 和逐工具示例见 [MCP 接入与使用指南](Doc/MCP接入与使用指南.md)。
+当前仓库版本为 `0.1.0`。本文档只描述源码中已经实现的行为；MCP 参数的完整 schema 和逐工具示例见 [MCP 接入与使用指南](Doc/MCP接入与使用指南.md)。反向定位问题并创建候选前提与推理边的操作流程见 [反向推理基本步骤](Doc/反向推理基本步骤.md)。
 
 ## 项目边界
 
@@ -28,7 +28,7 @@ InferenceGraph 负责记录和调度推理过程，不负责：
 | 测试          | Vitest `3.2.4`、Playwright `1.57.0`                                        |
 | MCP HTTP 地址 | `http://127.0.0.1:8791/mcp`                                                |
 | Web 开发地址  | `http://127.0.0.1:5174`                                                    |
-| 工具数量      | 25 个（以 `tools/list` 为准）                                              |
+| 工具数量      | 26 个（以 `tools/list` 为准）                                              |
 | 认证          | 当前没有认证层，默认只绑定回环地址                                         |
 | stdio         | 当前没有 stdio server 入口                                                 |
 
@@ -54,7 +54,7 @@ InferenceGraph/
 │   ├── reasoner-schema/       # Zod schema、ID、错误和领域类型
 │   ├── reasoner-core/         # 推理服务、图算法、前沿和上下文投影
 │   ├── reasoner-storage/      # SQLite repository、迁移和 JSONL 审计
-│   ├── reasoner-mcp/          # 25 个 MCP 工具及统一 controller
+│   ├── reasoner-mcp/          # 26 个 MCP 工具及统一 controller
 │   ├── reasoner-logging/      # Pino 文件日志、轮转和脱敏
 │   └── reasoner-test-agent/   # 不访问网络的 BD1 fixture 回放 CLI
 ├── tests/
@@ -118,7 +118,7 @@ curl http://127.0.0.1:8791/health
 预期响应：
 
 ```json
-{ "status": "ok", "tools": 25 }
+{ "status": "ok", "tools": 26 }
 ```
 
 ### 3. 启动 Web UI
@@ -270,7 +270,7 @@ answer_evidence_question（如有问题）
         ↓
 complete_inference_edge / block_inference_edge / release_inference_edge
         ↓
-get_reasoning_context / get_context_for_vertex / get_reasoning_text_for_vertex / get_context_for_edge
+get_reasoning_context / get_context_for_vertex / get_downstream_context_for_vertex / get_reasoning_text_for_vertex / get_context_for_edge
         ↓
 finish_reasoning_session（需要显式结束时）
 ```
@@ -289,7 +289,7 @@ finish_reasoning_session（需要显式结束时）
 
 例如一次调用传入 `sourceVertexIds: [V1, V3, V4]`、`targetVertexIds: [V9]` 时，会产生：`V1 -> V9 = E1`、`V3 -> V9 = E2`、`V4 -> V9 = E3`。三条线各自独立，但 `V9` 的公式是 `E1 ∧ E2 ∧ E3: V1 ∧ V3 ∧ V4 -> V9`，所以三条边都完成后才推出 `V9`。若另一次调用再为 `V9` 创建公式组，则完整的任一公式组即可推出 `V9`。响应中的 `edges` 按该顺序返回全部边；为兼容单边调用，`edge` 仍是其中第一条。批量展开为多条边时不能同时指定单个内部 `edgeId`。
 
-所有引用既有顶点或边的 MCP 参数都同时接受内部 ID 和 `Vn`/`En`：例如 `get_vertex`、`update_vertex`、`get_context_for_vertex`、`get_reasoning_text_for_vertex`、`propose_inference_edge` 的前提/结论数组，以及 `get_inference_edge`、`update_inference_edge`、领取、释放、完成、阻塞和 `get_context_for_edge`。服务会在调用业务逻辑前解析为内部 ID。新建顶点或边时可选的 `vertexId` / `edgeId` 仍表示调用方指定的内部 ID，但不得使用保留的 `Vn` / `En` 格式，以免与正式引用冲突。
+所有引用既有顶点或边的 MCP 参数都同时接受内部 ID 和 `Vn`/`En`：例如 `get_vertex`、`update_vertex`、`get_context_for_vertex`、`get_downstream_context_for_vertex`、`get_reasoning_text_for_vertex`、`propose_inference_edge` 的前提/结论数组，以及 `get_inference_edge`、`update_inference_edge`、领取、释放、完成、阻塞和 `get_context_for_edge`。服务会在调用业务逻辑前解析为内部 ID。新建顶点或边时可选的 `vertexId` / `edgeId` 仍表示调用方指定的内部 ID，但不得使用保留的 `Vn` / `En` 格式，以免与正式引用冲突。
 
 ### 会话和顶点
 
@@ -324,12 +324,13 @@ finish_reasoning_session（需要显式结束时）
 
 ### 上下文和审计
 
-| 工具                            | 作用                                         | 修改图 |
-| ------------------------------- | -------------------------------------------- | ------ |
-| `get_context_for_vertex`        | 获取顶点的依赖投影、证据摘要和扩展句柄       | 否     |
-| `get_reasoning_text_for_vertex` | 将顶点依赖投影转写为推理文本和 Mermaid 图    | 否     |
-| `get_context_for_edge`          | 获取执行边所需的前提、结论、祖先和上下文哈希 | 否     |
-| `get_reasoning_context`         | 获取会话快照、前沿、状态计数和分页事件       | 否     |
+| 工具                                | 作用                                         | 修改图 |
+| ----------------------------------- | -------------------------------------------- | ------ |
+| `get_context_for_vertex`            | 获取顶点的依赖投影、证据摘要和扩展句柄       | 否     |
+| `get_downstream_context_for_vertex` | 获取直接下游关系和到 Goal 的最短路径摘要     | 否     |
+| `get_reasoning_text_for_vertex`     | 将顶点依赖投影转写为推理文本和 Mermaid 图    | 否     |
+| `get_context_for_edge`              | 获取执行边所需的前提、结论、祖先和上下文哈希 | 否     |
+| `get_reasoning_context`             | 获取会话快照、前沿、状态计数和分页事件       | 否     |
 
 `get_reasoning_text_for_vertex` 接受与 `get_context_for_vertex` 相同的 `sessionId`、`vertexId`、`policy` 和 `expansionHandleId`。它返回原始 `context`、可直接展示的 Markdown `reasoningText`（其中包含 Mermaid 代码块）和可单独渲染的原始 `mermaid`。文本会先列出当前顶点的公式组以及每组完成进度；Mermaid 只绘制该顶点的依赖投影，不会额外注入无关的会话 Goal，并保留 Candidate、Leased、Completed 与 Blocked 的上游关系。当前顶点的公式摘要写在该顶点标签中，每条直接箭头则显示 `En · 边描述`，不生成中间公式节点。
 

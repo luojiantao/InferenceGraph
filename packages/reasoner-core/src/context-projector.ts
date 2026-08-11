@@ -2,11 +2,13 @@ import type {
   EdgeExecutionContext,
   EdgeId,
   GlobalNavigationSummary,
+  GoalPathSummary,
   GraphSnapshot,
   InferenceEdge,
   ProjectionPolicy,
   Result,
   Vertex,
+  VertexDownstreamContext,
   VertexExpansionContext,
   VertexId,
 } from '@reasoner/schema';
@@ -129,9 +131,13 @@ export const projectVertexContext = (
   const index = buildGraphIndex(snapshot);
   const currentVertex = index.vertexById.get(vertexId);
   if (currentVertex === undefined) {
-    return err('VertexNotFound', `vertex ${vertexId} is not part of session ${snapshot.session.sessionId}`, {
-      vertexId,
-    });
+    return err(
+      'VertexNotFound',
+      `vertex ${vertexId} is not part of session ${snapshot.session.sessionId}`,
+      {
+        vertexId,
+      },
+    );
   }
   const goalVertex = index.vertexById.get(snapshot.session.goalVertexId);
   if (goalVertex === undefined) {
@@ -149,7 +155,10 @@ export const projectVertexContext = (
         }
       : collectVertexProjectionAncestors(index, vertexId, maxDepth);
 
-  const includedVertexIds = new Set<VertexId>([vertexId, ...ancestors.vertices.map((v) => v.vertexId)]);
+  const includedVertexIds = new Set<VertexId>([
+    vertexId,
+    ...ancestors.vertices.map((v) => v.vertexId),
+  ]);
   const includedEdgeIds = new Set<EdgeId>(ancestors.edges.map((e) => e.edgeId));
 
   const omittedVertexIds = snapshot.vertices
@@ -189,6 +198,148 @@ export const projectVertexContext = (
   };
 
   return ok({ ...body, contextHash: hashCanonical(body) } as VertexExpansionContext);
+};
+
+interface DownstreamPredecessor {
+  readonly sourceVertexId: VertexId;
+  readonly edgeId: EdgeId;
+}
+
+const unreachableGoalPath = (): GoalPathSummary => ({
+  reachable: false,
+  hopCount: null,
+  vertices: [],
+  edges: [],
+});
+
+/**
+ * Finds one shortest recorded downstream route. Abandoned and invalid edges
+ * cannot provide retained navigation; all remaining states stay visible so the
+ * caller can distinguish a completed route from work still awaiting validation.
+ */
+const summarizeGoalPath = (
+  index: GraphIndex,
+  startVertex: Vertex,
+  goalVertex: Vertex,
+): GoalPathSummary => {
+  if (startVertex.vertexId === goalVertex.vertexId) {
+    return { reachable: true, hopCount: 0, vertices: [startVertex], edges: [] };
+  }
+
+  const visited = new Set<VertexId>([startVertex.vertexId]);
+  const predecessor = new Map<VertexId, DownstreamPredecessor>();
+  const queue: VertexId[] = [startVertex.vertexId];
+  let found = false;
+
+  while (queue.length > 0 && !found) {
+    const sourceVertexId = queue.shift();
+    if (sourceVertexId === undefined) continue;
+
+    const outgoingEdgeIds = index.outgoingEdgeIds.get(sourceVertexId) ?? [];
+    for (const edgeId of outgoingEdgeIds) {
+      const edge = index.edgeById.get(edgeId);
+      if (edge === undefined || edge.state === 'Abandoned' || edge.state === 'Invalid') continue;
+
+      const targetVertexId = edge.targetVertexIds[0];
+      if (
+        targetVertexId === undefined ||
+        !index.vertexById.has(targetVertexId) ||
+        visited.has(targetVertexId)
+      ) {
+        continue;
+      }
+
+      visited.add(targetVertexId);
+      predecessor.set(targetVertexId, { sourceVertexId, edgeId });
+      if (targetVertexId === goalVertex.vertexId) {
+        found = true;
+        break;
+      }
+      queue.push(targetVertexId);
+    }
+  }
+
+  if (!found) return unreachableGoalPath();
+
+  const reversedVertexIds: VertexId[] = [goalVertex.vertexId];
+  const reversedEdgeIds: EdgeId[] = [];
+  let cursor = goalVertex.vertexId;
+  while (cursor !== startVertex.vertexId) {
+    const step = predecessor.get(cursor);
+    if (step === undefined) return unreachableGoalPath();
+    reversedEdgeIds.push(step.edgeId);
+    cursor = step.sourceVertexId;
+    reversedVertexIds.push(cursor);
+  }
+
+  const vertices: Vertex[] = [];
+  for (const vertexId of reversedVertexIds.reverse()) {
+    const vertex = index.vertexById.get(vertexId);
+    if (vertex === undefined) return unreachableGoalPath();
+    vertices.push(vertex);
+  }
+
+  const edges: InferenceEdge[] = [];
+  for (const edgeId of reversedEdgeIds.reverse()) {
+    const edge = index.edgeById.get(edgeId);
+    if (edge === undefined) return unreachableGoalPath();
+    edges.push(edge);
+  }
+
+  return { reachable: true, hopCount: edges.length, vertices, edges };
+};
+
+/** Builds the fixed downstream projection served by get_downstream_context_for_vertex. */
+export const projectVertexDownstreamContext = (
+  snapshot: GraphSnapshot,
+  vertexId: VertexId,
+): Result<VertexDownstreamContext> => {
+  const index = buildGraphIndex(snapshot);
+  const currentVertex = index.vertexById.get(vertexId);
+  if (currentVertex === undefined) {
+    return err(
+      'VertexNotFound',
+      `vertex ${vertexId} is not part of session ${snapshot.session.sessionId}`,
+      {
+        vertexId,
+      },
+    );
+  }
+
+  const goalVertex = index.vertexById.get(snapshot.session.goalVertexId);
+  if (goalVertex === undefined) {
+    return err('StructurallyInvalid', 'session goal vertex is missing from the snapshot', {
+      goalVertexId: snapshot.session.goalVertexId,
+    });
+  }
+
+  const directDownstreamEdges: InferenceEdge[] = [];
+  const directDownstreamVertexIds = new Set<VertexId>();
+  for (const edgeId of index.outgoingEdgeIds.get(vertexId) ?? []) {
+    const edge = index.edgeById.get(edgeId);
+    if (edge === undefined) continue;
+    directDownstreamEdges.push(edge);
+    const targetVertexId = edge.targetVertexIds[0];
+    if (targetVertexId !== undefined) directDownstreamVertexIds.add(targetVertexId);
+  }
+
+  const directDownstreamVertices = [...directDownstreamVertexIds]
+    .sort()
+    .flatMap((targetVertexId) => {
+      const vertex = index.vertexById.get(targetVertexId);
+      return vertex === undefined ? [] : [vertex];
+    });
+
+  return ok({
+    sessionId: snapshot.session.sessionId,
+    vertexId,
+    graphRevision: snapshot.graphRevision,
+    currentVertex,
+    goalVertex,
+    directDownstreamEdges,
+    directDownstreamVertices,
+    goalPathSummary: summarizeGoalPath(index, currentVertex, goalVertex),
+  });
 };
 
 /**
@@ -242,9 +393,13 @@ export const projectEdgeContext = (
   const index = buildGraphIndex(snapshot);
   const edge = index.edgeById.get(edgeId);
   if (edge === undefined) {
-    return err('EdgeNotFound', `edge ${edgeId} is not part of session ${snapshot.session.sessionId}`, {
-      edgeId,
-    });
+    return err(
+      'EdgeNotFound',
+      `edge ${edgeId} is not part of session ${snapshot.session.sessionId}`,
+      {
+        edgeId,
+      },
+    );
   }
   const goalVertex = index.vertexById.get(snapshot.session.goalVertexId);
   if (goalVertex === undefined) {

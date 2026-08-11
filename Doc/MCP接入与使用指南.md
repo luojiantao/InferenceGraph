@@ -8,7 +8,7 @@
 | ----------- | ---------------------------------------------------- |
 | MCP 端点    | `http://127.0.0.1:8791/mcp`                          |
 | 传输        | MCP Streamable HTTP；服务端开启 JSON 响应模式        |
-| 工具数量    | 25 个                                                |
+| 工具数量    | 26 个                                                |
 | 服务名/版本 | `inference-graph-reasoner` / `0.1.0`                 |
 | 默认监听    | 仅回环地址 `127.0.0.1`                               |
 | 鉴权        | 当前没有鉴权或 API Key                               |
@@ -86,7 +86,7 @@ curl http://127.0.0.1:8791/health
 正常返回类似：
 
 ```json
-{ "status": "ok", "tools": 25 }
+{ "status": "ok", "tools": 26 }
 ```
 
 ### 3.2 服务端环境变量
@@ -344,7 +344,7 @@ await transport.close();
 
 前沿排序是确定性的：DFS 优先深度、BFS 优先浅度、Priority 优先高 `priority`；相同条件最终按 `edgeId` 排序。
 
-## 8. 25 个 MCP 工具参考
+## 8. 26 个 MCP 工具参考
 
 ### 8.1 参数约定
 
@@ -407,12 +407,15 @@ claim 会在同一事务内回收已经过期的租约，再按指定边或策�
 
 #### 上下文工具
 
-| 工具                            | 变更图 | 输入                                                                                     | 返回                                                                                 |
-| ------------------------------- | ------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `get_context_for_vertex`        | 否     | `sessionId`、`vertexId`；`policy?`；`expansionHandleId?`                                 | `{context: VertexExpansionContext}`                                                  |
-| `get_reasoning_text_for_vertex` | 否     | `sessionId`、`vertexId`；`policy?`；`expansionHandleId?`                                 | `{context, reasoningText, mermaid}`                                                  |
-| `get_context_for_edge`          | 否     | `sessionId`、`edgeId`；`policy?`；`expansionHandleId?`                                   | `{context: EdgeExecutionContext}`                                                    |
-| `get_reasoning_context`         | 否     | `sessionId`；`afterEventSeq?` 非负整数，默认 `0`；`eventLimit?` 正整数 ≤1000，默认 `200` | `{snapshot, frontierEdgeIds, edgeCountByState, events, nextEventSeq, hasMoreEvents}` |
+| 工具                                | 变更图 | 输入                                                                                     | 返回                                                                                 |
+| ----------------------------------- | ------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `get_context_for_vertex`            | 否     | `sessionId`、`vertexId`；`policy?`；`expansionHandleId?`                                 | `{context: VertexExpansionContext}`                                                  |
+| `get_downstream_context_for_vertex` | 否     | `sessionId`、`vertexId`                                                                  | `{context: VertexDownstreamContext}`                                                 |
+| `get_reasoning_text_for_vertex`     | 否     | `sessionId`、`vertexId`；`policy?`；`expansionHandleId?`                                 | `{context, reasoningText, mermaid}`                                                  |
+| `get_context_for_edge`              | 否     | `sessionId`、`edgeId`；`policy?`；`expansionHandleId?`                                   | `{context: EdgeExecutionContext}`                                                    |
+| `get_reasoning_context`             | 否     | `sessionId`；`afterEventSeq?` 非负整数，默认 `0`；`eventLimit?` 正整数 ≤1000，默认 `200` | `{snapshot, frontierEdgeIds, edgeCountByState, events, nextEventSeq, hasMoreEvents}` |
+
+`get_downstream_context_for_vertex` 返回全部直接出边、去重后的直接目标顶点，以及一条从当前顶点到会话 Goal 的确定性最短路径。直接出边保留所有状态；Goal 路径不经过 `Abandoned` 或 `Invalid` 边。路径只是下游导航摘要，边可能仍是 `Candidate`、`Leased` 或 `Blocked`，不能据此认定 Goal 已被支持。同一公式的其他 AND 前提不会被伪造成线性路径节点，应通过路径边的 `formulaId` 和其他图查询读取。
 
 `get_reasoning_text_for_vertex` 使用与 `get_context_for_vertex` 相同的依赖投影，返回包含 Mermaid 代码块的 `reasoningText` 和可单独渲染的原始 `mermaid`。文本会写出当前顶点的合取公式、完成进度及多个公式组间的析取关系；Mermaid 只绘制当前依赖投影中的顶点，不会额外注入无关的会话 Goal，并保留 Candidate、Leased、Completed 与 Blocked 的上游关系。它把公式摘要写在当前顶点标签中，每条直接箭头显示 `En · 边描述`，不会生成不存在的中间公式节点或推导连线。`get_context_for_edge` 的 `context.contextHash` 是执行视角的哈希；claim 返回的 context 会被归档，complete 必须提交 claim 返回的那一个 hash。`get_reasoning_context` 的增量游标是 `eventSeq`，不要用 `graphRevision` 分页。
 
@@ -422,7 +425,7 @@ claim 会在同一事务内回收已经过期的租约，再按指定边或策�
 
 `InferenceEdge`：`edgeId`、`referenceId`（`En`）、`formulaId`（同一顶点公式的独立边分组）、`sourceVertexIds`（恰好一个顶点）、`targetVertexIds`（恰好一个顶点）、`label`、`state`、`cost`、`priority`、`evidenceQuestions`、`conclusion?`、`blockedReason?`、`lease?`、`dedupeKey?`、`proposedByAgentId`、`createdAt`、`createdAtRevision`、`updatedAtRevision`。
 
-`EdgeExecutionContext` 还包含 `goalVertex`、`sourceVertices`、`targetVertices`、祖先顶点/边、证据问题、可选全局摘要、扩展句柄、遗漏 ID 和 `contextHash`。`VertexExpansionContext` 对应包含当前顶点及其必要祖先子图。
+`EdgeExecutionContext` 还包含 `goalVertex`、`sourceVertices`、`targetVertices`、祖先顶点/边、证据问题、可选全局摘要、扩展句柄、遗漏 ID 和 `contextHash`。`VertexExpansionContext` 对应包含当前顶点及其必要祖先子图。`VertexDownstreamContext` 包含 `currentVertex`、`goalVertex`、`directDownstreamEdges`、`directDownstreamVertices` 和 `goalPathSummary`；路径摘要通过 `reachable`、`hopCount` 以及有序的 `vertices`、`edges` 描述一条最短下游路径。
 
 ## 9. 推荐的完整调用流程
 
@@ -501,7 +504,7 @@ tail -f data/logs/reasoner-server.log | jq 'select(.errorCode)'
 
 ## 12. 版本与扩展
 
-工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 25 个工具。
+工具列表的单一事实来源是 `packages/reasoner-mcp/src/reasoner-tool-controller.ts`，输入/输出 schema 在 `packages/reasoner-schema/src/mcp.ts`。接入方应在连接后执行 `tools/list`，不要假设未来版本仍只有这 26 个工具。
 
 如果需要在另一个 Node 进程中嵌入 MCP server，可依赖 `@reasoner/mcp` 的 `createReasonerMcpServer(service)`；该函数只创建 MCP server 和 controller，不创建存储或 HTTP listener。生产接入仍建议使用 `@reasoner/server`，让数据目录、生命周期和 session transport 由统一应用管理。
 

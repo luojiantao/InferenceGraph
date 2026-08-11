@@ -2,7 +2,7 @@
 
 本文面向调用 InferenceGraph 的 Agent、MCP Host 和运维人员。内容以当前运行中的
 `/health`、`/api/tools` 以及源码中的工具注册和 Zod Schema 为准：服务通过 Streamable HTTP
-提供 25 个 MCP 工具，用于记录、调度、校验和手动校正证据推理图；服务不会自行生成领域事实或结论。
+提供 26 个 MCP 工具，用于记录、调度、校验和手动校正证据推理图；服务不会自行生成领域事实或结论。
 
 完整的协议握手、所有字段范围和 Node SDK 示例见
 [MCP 接入与使用指南](MCP接入与使用指南.md)。
@@ -67,7 +67,7 @@ DELETE /mcp
 `/api/tools/:tool` 是 Web UI 和诊断脚本可用的直接 JSON bridge，不是 MCP transport。
 MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配置成 MCP 地址。
 
-## 3. 25 个工具如何选择
+## 3. 26 个工具如何选择
 
 | 分组   | 工具                                               | 何时使用                                                               |
 | ------ | -------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -90,6 +90,7 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 | 取证   | `complete_inference_edge`                          | 所有问题回答后，以领取时的 context hash 和结论完成边。                 |
 | 取证   | `block_inference_edge`                             | 发现冲突证据或无法继续时记录阻塞原因。                                 |
 | 上下文 | `get_context_for_vertex`                           | 为继续扩展某顶点获取依赖子图、证据摘要和全局概况。                     |
+| 上下文 | `get_downstream_context_for_vertex`                | 获取顶点的直接出边、直接下游节点和到 Goal 的最短路径摘要。             |
 | 上下文 | `get_reasoning_text_for_vertex`                    | 将某顶点的依赖子图转写为 Markdown 推理文本和 Mermaid。                 |
 | 上下文 | `get_context_for_edge`                             | 读取单边执行所需的前提、问题、祖先和 `contextHash`。                   |
 | 上下文 | `get_reasoning_context`                            | 同步完整快照、候选前沿、状态计数和按 `eventSeq` 分页的审计事件。       |
@@ -128,7 +129,7 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 
 `V1`、`V2` 和 `E1`、`E2` 是会话内稳定引用，不是前端临时编号。读取和引用现有实体时，
 大多数工具可接受内部 ID 或这些别名；例如 `get_vertex`、`get_context_for_vertex`、
-`get_reasoning_text_for_vertex`、边查询、领取、释放、完成和阻塞。
+`get_downstream_context_for_vertex`、`get_reasoning_text_for_vertex`、边查询、领取、释放、完成和阻塞。
 
 新增顶点或边时，`vertexId` / `edgeId` 是调用方可选的内部 ID，不能传 `Vn` / `En` 格式，
 以免和服务分配的正式索引冲突。
