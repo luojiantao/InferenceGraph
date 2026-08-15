@@ -367,7 +367,7 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       name: 'get_reasoning_context',
       title: 'Get reasoning context',
       description:
-        'Session-level overview: snapshot, frontier, edge counts by state and the event log paged by eventSeq. Does not return single-vertex or single-edge payloads.',
+        'Session-level overview: snapshot, a compact AND/OR formula-group structure, frontier, edge counts by state and the event log paged by eventSeq. Formula groups reference snapshot ids instead of duplicating vertex or edge payloads.',
       mutating: false,
       inputSchema: GetReasoningContextInputSchema,
       handler: (input) => service.getReasoningContext(input),
