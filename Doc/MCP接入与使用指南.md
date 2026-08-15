@@ -413,11 +413,18 @@ claim 会在同一事务内回收已经过期的租约，再按指定边或策�
 | `get_downstream_context_for_vertex` | 否     | `sessionId`、`vertexId`                                                                  | `{context: VertexDownstreamContext}`                                                 |
 | `get_reasoning_text_for_vertex`     | 否     | `sessionId`、`vertexId`；`policy?`；`expansionHandleId?`                                 | `{context, reasoningText, mermaid}`                                                  |
 | `get_context_for_edge`              | 否     | `sessionId`、`edgeId`；`policy?`；`expansionHandleId?`                                   | `{context: EdgeExecutionContext}`                                                    |
-| `get_reasoning_context`             | 否     | `sessionId`；`afterEventSeq?` 非负整数，默认 `0`；`eventLimit?` 正整数 ≤1000，默认 `200` | `{snapshot, frontierEdgeIds, edgeCountByState, events, nextEventSeq, hasMoreEvents}` |
+| `get_reasoning_context`             | 否     | `sessionId`；`afterEventSeq?` 非负整数，默认 `0`；`eventLimit?` 正整数 ≤1000，默认 `200` | `{snapshot, reasoningStructure, frontierEdgeIds, edgeCountByState, events, nextEventSeq, hasMoreEvents}` |
 
 `get_downstream_context_for_vertex` 返回全部直接出边、去重后的直接目标顶点，以及一条从当前顶点到会话 Goal 的确定性最短路径。直接出边保留所有状态；Goal 路径不经过 `Abandoned` 或 `Invalid` 边。路径只是下游导航摘要，边可能仍是 `Candidate`、`Leased` 或 `Blocked`，不能据此认定 Goal 已被支持。同一公式的其他 AND 前提不会被伪造成线性路径节点，应通过路径边的 `formulaId` 和其他图查询读取。
 
 `get_reasoning_text_for_vertex` 使用与 `get_context_for_vertex` 相同的依赖投影，返回包含 Mermaid 代码块的 `reasoningText` 和可单独渲染的原始 `mermaid`。文本会写出当前顶点的合取公式、完成进度及多个公式组间的析取关系；Mermaid 只绘制当前依赖投影中的顶点，不会额外注入无关的会话 Goal，并保留 Candidate、Leased、Completed 与 Blocked 的上游关系。它把公式摘要写在当前顶点标签中，每条直接箭头显示 `En · 边描述`，不会生成不存在的中间公式节点或推导连线。`get_context_for_edge` 的 `context.contextHash` 是执行视角的哈希；claim 返回的 context 会被归档，complete 必须提交 claim 返回的那一个 hash。`get_reasoning_context` 的增量游标是 `eventSeq`，不要用 `graphRevision` 分页。
+
+`get_reasoning_context.reasoningStructure` 是面向 Agent 总结与机器解析的紧凑结构视图，不复制 `snapshot.vertices` 或 `snapshot.edges` 的完整对象：
+
+- `schemaVersion`：当前为 `1`，供后续兼容升级判断。
+- `formulaGroups`：每项只用顶点/边 ID 表示一个逻辑公式。组内 `sourceVertexIds` 是 AND 前提；多个 `targetVertexId` 相同的公式组是 OR 备选路径。顶点标签、payload、边的证据与精确状态都仍从 `snapshot` 按 ID 获取。
+- `formulaGroups[].state`：`Completed` 表示组内所有物理边均完成；`Blocked` 表示至少一个物理边为 `Blocked`、`Abandoned` 或 `Invalid`；其余可继续处理的组按是否存在租约区分为 `Leased` 或 `Candidate`。
+- `goalAssessment`：只给出结构化的目标支持结论、建议会话状态与理由；现有 `edgeCountByState` 继续提供全局边状态计数，避免重复返回统计数据。
 
 ### 8.2 顶点/边返回对象的关键字段
 
