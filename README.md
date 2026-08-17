@@ -450,6 +450,7 @@ pnpm replay:bd1      # 使用内置 fixture 在内存中回放 DFS/BFS
 
 ## 参考资料
 
+- [Agent Skills 安装说明](Doc/AgentSkills安装说明.md)：独立分发包的安装和维护方式。
 - [MCP 接入与使用指南](Doc/MCP接入与使用指南.md)：Streamable HTTP 握手、客户端示例、错误处理和完整参数表。
 - [本地推理实现计划](evidence-graph-local-reasoning-implementation-plan.md)：设计背景和验收记录。
 - Schema 单一事实来源：`packages/reasoner-schema/src/`。
