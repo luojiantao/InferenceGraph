@@ -93,7 +93,7 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 | 上下文 | `get_downstream_context_for_vertex`                | 获取顶点的直接出边、直接下游节点和到 Goal 的最短路径摘要。             |
 | 上下文 | `get_reasoning_text_for_vertex`                    | 将某顶点的依赖子图转写为 Markdown 推理文本和 Mermaid。                 |
 | 上下文 | `get_context_for_edge`                             | 读取单边执行所需的前提、问题、祖先和 `contextHash`。                   |
-| 上下文 | `get_reasoning_context`                            | 同步完整快照、候选前沿、状态计数和按 `eventSeq` 分页的审计事件。       |
+| 上下文 | `get_reasoning_context`                            | 同步完整快照、紧凑的 AND/OR 公式组结构、候选前沿、状态计数和按 `eventSeq` 分页的审计事件。 |
 
 除 `create_reasoning_session` 外，所有写工具都必须带上：
 
@@ -122,6 +122,16 @@ MCP Host 应连接 `/mcp`，不要把 `/health`、`/api/tools` 或根路径配�
 将 `alias` 设为 `null` 可清除别名；`delete_reasoning_session` 的调用还需把 `confirm` 设为 `true`。别名和标签只用于会话管理展示，不会改写图中已经分配的 `V1`、`E1` 等正式索引。
 
 顶点和边的手动编辑也必须携带当前 `baseGraphRevision`。`update_vertex` 只允许更新 `label` 和 `payload`，不会改变 `Vn`、顶点类型或创建信息；任何相连的边处于 `Leased` 时必须先释放租约。`update_inference_edge` 只允许更新 `label`、`cost`、`priority` 和 Candidate 边的完整 `evidenceQuestions` 列表，不能改写 `En`、来源/目标顶点、公式组或生命周期状态；处于 `Leased` 的边不能编辑。
+
+### 3.1 `get_reasoning_context` 的结构化视图
+
+返回中的 `snapshot` 是顶点和物理边完整对象的唯一来源；新增的 `reasoningStructure` 不会再复制它们，只使用 ID 建立逻辑公式组，适合 Agent 直接总结和程序稳定解析：
+
+- `formulaGroups`：同组 `sourceVertexIds` 是 AND 前提；多个 `targetVertexId` 相同的组是 OR 备选推导。
+- `formulaGroups[].state`：聚合一个公式内物理边的状态；`Completed` 表示全部完成，`Blocked` 也覆盖 `Abandoned` 和 `Invalid`，其余为 `Leased` 或 `Candidate`。
+- `goalAssessment`：返回目标是否已由完成公式支持、建议的会话状态和结构化理由；目标 ID 仍使用 `snapshot.session.goalVertexId`，全局状态计数仍使用 `edgeCountByState`，避免重复数据。
+
+需要顶点标签、payload、单边证据或精确状态时，再按 `formulaGroups` 中的 ID 从 `snapshot` 查找即可。
 
 ## 4. 图和公式语义
 

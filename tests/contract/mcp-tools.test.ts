@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ReasonerService, type Clock, type IdGenerator } from '@reasoner/core';
 import { createStorage } from '@reasoner/storage';
 import { createReasonerToolController } from '@reasoner/mcp';
-import { isErr, isOk } from '@reasoner/schema';
+import { GetReasoningContextOutputSchema, isErr, isOk } from '@reasoner/schema';
 
 class FixedClock implements Clock {
   now(): string {
@@ -183,6 +183,92 @@ describe('MCP input validation', () => {
       goalLabel: 'minimal input',
     });
     expect(isOk(result)).toBe(true);
+    storage.close();
+  });
+
+  it('returns a compact formula-group structure from get_reasoning_context', async () => {
+    const { controller, storage } = newController();
+    const created = await controller.invoke('create_reasoning_session', {
+      agentId: 'agent-a',
+      goalLabel: 'goal',
+    });
+    if (!isOk(created)) throw new Error('session creation failed');
+    const createdOut = created.value as {
+      session: { sessionId: string; graphRevision: number };
+      goalVertex: { vertexId: string };
+    };
+
+    const premiseA = await controller.invoke('add_state_vertex', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: createdOut.session.graphRevision,
+      agentId: 'agent-a',
+      label: 'premise A',
+    });
+    if (!isOk(premiseA)) throw new Error('first premise creation failed');
+    const premiseAOut = premiseA.value as {
+      graphRevision: number;
+      vertex: { vertexId: string };
+    };
+
+    const premiseB = await controller.invoke('add_state_vertex', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: premiseAOut.graphRevision,
+      agentId: 'agent-a',
+      label: 'premise B',
+    });
+    if (!isOk(premiseB)) throw new Error('second premise creation failed');
+    const premiseBOut = premiseB.value as {
+      graphRevision: number;
+      vertex: { vertexId: string };
+    };
+
+    const proposed = await controller.invoke('propose_inference_edge', {
+      sessionId: createdOut.session.sessionId,
+      baseGraphRevision: premiseBOut.graphRevision,
+      agentId: 'agent-a',
+      sourceVertexIds: [premiseAOut.vertex.vertexId, premiseBOut.vertex.vertexId],
+      targetVertexIds: [createdOut.goalVertex.vertexId],
+      label: 'both premises imply the goal',
+    });
+    if (!isOk(proposed)) throw new Error('formula proposal failed');
+    const proposedOut = proposed.value as {
+      edges: Array<{ edgeId: string; formulaId: string }>;
+    };
+
+    const context = await controller.invoke('get_reasoning_context', {
+      sessionId: createdOut.session.sessionId,
+    });
+    if (!isOk(context)) throw new Error('reasoning context failed');
+    const contextOut = context.value as {
+      snapshot: { vertices: unknown[]; edges: unknown[] };
+      reasoningStructure: {
+        schemaVersion: number;
+        formulaGroups: Array<{
+          formulaId: string;
+          sourceVertexIds: string[];
+          targetVertexId: string;
+          edgeIds: string[];
+          state: string;
+        }>;
+      };
+    };
+
+    expect(contextOut.snapshot.vertices).toHaveLength(3);
+    expect(contextOut.snapshot.edges).toHaveLength(2);
+    expect(GetReasoningContextOutputSchema.safeParse(context.value).success).toBe(true);
+    expect(contextOut.reasoningStructure.schemaVersion).toBe(1);
+    expect(contextOut.reasoningStructure).not.toHaveProperty('vertices');
+    expect(contextOut.reasoningStructure).not.toHaveProperty('edges');
+    expect(contextOut.reasoningStructure.formulaGroups).toEqual([
+      {
+        formulaId: proposedOut.edges[0]?.formulaId,
+        sourceVertexIds: [premiseAOut.vertex.vertexId, premiseBOut.vertex.vertexId].sort(),
+        targetVertexId: createdOut.goalVertex.vertexId,
+        edgeIds: proposedOut.edges.map((edge) => edge.edgeId).sort(),
+        state: 'Candidate',
+      },
+    ]);
+
     storage.close();
   });
 

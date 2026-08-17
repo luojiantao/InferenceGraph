@@ -3,6 +3,7 @@ import {
   AgentIdSchema,
   EdgeIdSchema,
   EventSeqSchema,
+  FormulaIdSchema,
   GraphRevisionSchema,
   LeaseIdSchema,
   QuestionIdSchema,
@@ -340,8 +341,52 @@ export const GetReasoningContextInputSchema = z.object({
   afterEventSeq: z.number().int().nonnegative().default(0),
   eventLimit: z.number().int().positive().max(1000).default(200),
 });
+
+/**
+ * Aggregate lifecycle for one logical inference formula. `Blocked` also covers
+ * an Abandoned or Invalid component, because an AND formula cannot complete
+ * while any one of its physical edges is in one of those terminal states.
+ */
+export const ReasoningFormulaGroupStateSchema = z.enum([
+  'Candidate',
+  'Leased',
+  'Completed',
+  'Blocked',
+]);
+
+/**
+ * A compact logical formula view over the physical edges in `snapshot.edges`.
+ * It intentionally contains ids and aggregate state only: vertex and edge
+ * details remain single-sourced in the snapshot.
+ */
+export const ReasoningFormulaGroupSchema = z.object({
+  formulaId: FormulaIdSchema,
+  sourceVertexIds: z.array(VertexIdSchema).min(1),
+  targetVertexId: VertexIdSchema,
+  edgeIds: z.array(EdgeIdSchema).min(1),
+  state: ReasoningFormulaGroupStateSchema,
+});
+
+/** Structural assessment of the session goal identified by `snapshot.session.goalVertexId`. */
+export const ReasoningGoalAssessmentSchema = z.object({
+  goalSupported: z.boolean(),
+  recommendedGoalState: GoalStateSchema,
+  rationale: z.string().min(1).max(2000),
+});
+
+/**
+ * Derived structural index for machine summary and parsing. Formula operands
+ * are AND-related; separate formula groups with the same target are OR-related.
+ */
+export const ReasoningStructureSchema = z.object({
+  schemaVersion: z.literal(1),
+  formulaGroups: z.array(ReasoningFormulaGroupSchema),
+  goalAssessment: ReasoningGoalAssessmentSchema,
+});
+
 export const GetReasoningContextOutputSchema = z.object({
   snapshot: GraphSnapshotSchema,
+  reasoningStructure: ReasoningStructureSchema,
   frontierEdgeIds: z.array(EdgeIdSchema),
   edgeCountByState: z.record(EdgeStateSchema, z.number().int().nonnegative()),
   events: z.array(GraphEventSchema),
@@ -416,3 +461,7 @@ export type GetContextForEdgeInput = z.infer<typeof GetContextForEdgeInputSchema
 export type GetContextForEdgeOutput = z.infer<typeof GetContextForEdgeOutputSchema>;
 export type GetReasoningContextInput = z.infer<typeof GetReasoningContextInputSchema>;
 export type GetReasoningContextOutput = z.infer<typeof GetReasoningContextOutputSchema>;
+export type ReasoningFormulaGroupState = z.infer<typeof ReasoningFormulaGroupStateSchema>;
+export type ReasoningFormulaGroup = z.infer<typeof ReasoningFormulaGroupSchema>;
+export type ReasoningGoalAssessment = z.infer<typeof ReasoningGoalAssessmentSchema>;
+export type ReasoningStructure = z.infer<typeof ReasoningStructureSchema>;

@@ -119,6 +119,7 @@ import {
 } from './context-projector.js';
 import { renderVertexReasoningContext } from './reasoning-context-renderer.js';
 import { assessGoal } from './goal-evaluator.js';
+import { buildReasoningStructure } from './reasoning-structure.js';
 
 /** Synthetic agent identifier for recovery-time structural checks. */
 const RECOVERY_ACTOR = 'system-recovery' as AgentId;
@@ -1616,6 +1617,7 @@ export class ReasonerService {
     const last = events.value[events.value.length - 1];
     return ok({
       snapshot: snapshot.value,
+      reasoningStructure: buildReasoningStructure(snapshot.value),
       frontierEdgeIds: frontier.map((entry) => entry.edgeId),
       edgeCountByState: counts,
       events: [...events.value],
