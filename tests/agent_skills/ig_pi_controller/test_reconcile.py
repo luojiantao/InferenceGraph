@@ -9,19 +9,19 @@ import unittest
 SCRIPTS = (
     Path(__file__).resolve().parents[3]
     / "AgentSkills"
-    / "inference-graph-sequential-subagent-expansion-codex-controller"
+    / "ig-pi-controller"
     / "scripts"
 )
 sys.path.insert(0, str(SCRIPTS))
 
-from ig_control.models import GraphSnapshot, ResearchResult, WorkerResult  # noqa: E402
-from ig_control.normalize import initialize_run, normalize_request  # noqa: E402
-from ig_control.reconcile import (  # noqa: E402
+from ig_pi_control.models import GraphSnapshot, ResearchResult, WorkerResult  # noqa: E402
+from ig_pi_control.normalize import initialize_run, normalize_request  # noqa: E402
+from ig_pi_control.reconcile import (  # noqa: E402
     acknowledge_expansion_settlement,
     reconcile_research_result,
     reconcile_worker_result,
 )
-from ig_control.scheduler import accept_expansion_claim, select_next_action  # noqa: E402
+from ig_pi_control.scheduler import accept_expansion_claim, select_next_action  # noqa: E402
 
 
 LEASE_ID = "vertex-expansion-lease-1"

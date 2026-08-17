@@ -9,14 +9,14 @@ import unittest
 SCRIPTS = (
     Path(__file__).resolve().parents[3]
     / "AgentSkills"
-    / "inference-graph-sequential-subagent-expansion-codex-controller"
+    / "ig-pi-controller"
     / "scripts"
 )
 sys.path.insert(0, str(SCRIPTS))
 
-from ig_control.models import ClaimedExpansion  # noqa: E402
-from ig_control.normalize import initialize_run, normalize_request  # noqa: E402
-from ig_control.report import render_report  # noqa: E402
+from ig_pi_control.models import ClaimedExpansion  # noqa: E402
+from ig_pi_control.normalize import initialize_run, normalize_request  # noqa: E402
+from ig_pi_control.report import render_report  # noqa: E402
 
 
 class ReportTests(unittest.TestCase):

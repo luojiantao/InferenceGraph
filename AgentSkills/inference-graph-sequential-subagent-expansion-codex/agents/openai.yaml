@@ -1,7 +1,0 @@
-interface:
-  display_name: "InferenceGraph Sequential Expansion (Codex)"
-  short_description: "Serial Codex workers build verified premise graphs."
-  default_prompt: "Use $inference-graph-sequential-subagent-expansion-codex to expand this InferenceGraph goal with bounded, verified Codex workers."
-
-policy:
-  allow_implicit_invocation: false

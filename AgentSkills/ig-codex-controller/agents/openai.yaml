@@ -1,0 +1,7 @@
+interface:
+  display_name: "IG Codex Controller"
+  short_description: "Deterministic control plane for serial graph expansion."
+  default_prompt: "Use $ig-codex-controller to expand this InferenceGraph goal with a validated Codex control plane."
+
+policy:
+  allow_implicit_invocation: false

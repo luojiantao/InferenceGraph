@@ -77,7 +77,7 @@
 
 控制器是本 Skill 的专属资源，随 Skill 一起安装、移动和升级：
 
-    AgentSkills/inference-graph-sequential-subagent-expansion-codex-controller/
+    AgentSkills/ig-codex-controller/
       SKILL.md
       scripts/ig_controller.py
       scripts/ig_control/{models,scheduler,reconcile,packet,normalize,context_pack,report}.py
@@ -124,6 +124,6 @@
 
     pnpm typecheck
     pnpm test
-    python -X utf8 -m unittest discover -s tests\agent_skills\inference_graph_sequential_subagent_expansion_codex_controller -p test_*.py -v
-    python -X utf8 C:\Users\Jon\.codex\skills\.system\skill-creator\scripts\quick_validate.py AgentSkills\inference-graph-sequential-subagent-expansion-codex-controller
+    python -X utf8 -m unittest discover -s tests\agent_skills\ig_codex_controller -p test_*.py -v
+    python -X utf8 C:\Users\Jon\.codex\skills\.system\skill-creator\scripts\quick_validate.py AgentSkills\ig-codex-controller
     git diff --check

@@ -1,5 +1,5 @@
 ---
-name: inference-graph-sequential-subagent-expansion-codex-controller
+name: ig-codex-controller
 description: 使用 Codex Worker、InferenceGraph MCP 与内置 Python 控制平面，串行地把 Goal 或 State 展开为可审计的 Candidate 前提图。用于用户明确要求受预算、revision 校验、节点扩展 lease、资料缺口管理和可恢复编排的复杂推理；仅在用户显式调用此 Skill 时使用。
 ---
 
@@ -8,6 +8,10 @@ description: 使用 Codex Worker、InferenceGraph MCP 与内置 Python 控制平
 使用本 Skill 目录中的 `scripts/ig_controller.py` 管理请求规范化、预算、Worker 结果校验、结算和报告。把 InferenceGraph 保持为图事实、节点调度顺序与租约状态的唯一来源。
 
 当前控制器一次只展开一个节点；图服务的 `maxVertices` 与持久化 lease 已为未来并发扩展准备好。
+
+## 名称说明
+
+`ig` 是 `InferenceGraph` 的简写；`codex-controller` 表示在 Codex 运行时使用的串行节点扩展控制器。完整图协议、lease 语义和调度约束不因缩写而改变。
 
 ## 前置条件
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "inference-graph-codex-controller"
+name = "inference-graph-pi-controller"
 version = "0.1.0"
-description = "Deterministic control plane for the Codex InferenceGraph expansion skill"
+description = "Deterministic control plane for the Pi InferenceGraph expansion skill"
 requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2.7,<3",
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [project.scripts]
-ig-controller = "ig_control.cli:main"
+ig-pi-controller = "ig_pi_control.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "scripts"}
@@ -31,4 +31,4 @@ target-version = "py311"
 line-length = 100
 
 [tool.pytest.ini_options]
-testpaths = ["../../tests/agent_skills/inference_graph_sequential_subagent_expansion_codex_controller"]
+testpaths = ["../../tests/agent_skills/ig_pi_controller"]

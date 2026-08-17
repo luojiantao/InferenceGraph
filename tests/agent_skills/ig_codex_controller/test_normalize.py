@@ -11,7 +11,7 @@ from pydantic import ValidationError
 SCRIPTS = (
     Path(__file__).resolve().parents[3]
     / "AgentSkills"
-    / "inference-graph-sequential-subagent-expansion-codex-controller"
+    / "ig-codex-controller"
     / "scripts"
 )
 sys.path.insert(0, str(SCRIPTS))

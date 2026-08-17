@@ -1,5 +1,5 @@
 ---
-name: inference-graph-sequential-subagent-expansion-codex
+name: ig-codex-expand
 description: 使用 Codex 的串行 fresh Worker 与 InferenceGraph MCP，将 Goal 或 State 逐节点、单层反向展开为可审计的 Candidate 前提图。用于复杂且需要证据追溯、恢复、AND/OR 语义或 revision 核验的推理任务；仅在用户明确要求使用此技能时调用。
 ---
 
@@ -7,7 +7,11 @@ description: 使用 Codex 的串行 fresh Worker 与 InferenceGraph MCP，将 Go
 
 将“回答一个问题”与“建立待取证的推理结构”分开。此技能只规划并持久化 `Candidate` 前提边，不得把候选结构表述为已经证明的结论，也不得执行 `claim`、取证、`complete` 或 `block`。
 
-使用 `$inference-graph-sequential-subagent-expansion-codex` 显式调用。不要因普通问答、代码审查或仅讨论本技能而自动启动 Worker。
+使用 `$ig-codex-expand` 显式调用。不要因普通问答、代码审查或仅讨论本技能而自动启动 Worker。
+
+## 名称说明
+
+`ig` 是 `InferenceGraph` 的简写；`codex-expand` 表示 Codex 上的串行、单层前提展开。完整的证据、revision 与 AND/OR 约束不因缩写而改变。
 
 ## 运行前检查
 

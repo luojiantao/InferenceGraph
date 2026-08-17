@@ -1,0 +1,7 @@
+interface:
+  display_name: "IG Pi Controller"
+  short_description: "Deterministic control plane for serial Pi graph expansion."
+  default_prompt: "Use $ig-pi-controller to expand this InferenceGraph goal with a validated Pi control plane."
+
+policy:
+  allow_implicit_invocation: false
