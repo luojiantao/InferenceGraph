@@ -9,7 +9,7 @@ import {
   Sha256Schema,
   VertexIdSchema,
 } from './ids.js';
-import { InferenceEdgeSchema, VertexSchema } from './graph.js';
+import { InferenceEdgeSchema, VertexExpansionSchema, VertexSchema } from './graph.js';
 
 /** Terminal and non-terminal goal states of a reasoning session. */
 export const GoalStateSchema = z.enum([
@@ -106,6 +106,12 @@ export const GraphEventKindSchema = z.enum([
   'EdgeAbandoned',
   'EdgeInvalidated',
   'EvidenceQuestionAnswered',
+  'VertexExpansionClaimed',
+  'VertexExpansionReleased',
+  'VertexExpansionDeferred',
+  'VertexExpansionCompleted',
+  'VertexExpansionBlocked',
+  'VertexExpansionLeaseExpired',
   'GoalStateChanged',
   'SessionFinished',
   'StructuralErrorDetected',
@@ -135,6 +141,8 @@ export const GraphSnapshotSchema = z.object({
   session: ReasoningSessionSchema,
   vertices: z.array(VertexSchema),
   edges: z.array(InferenceEdgeSchema),
+  /** Scheduler state for reverse expansion; independent from edge execution leases. */
+  vertexExpansions: z.array(VertexExpansionSchema).default([]),
   graphRevision: GraphRevisionSchema,
   snapshotHash: Sha256Schema,
 });

@@ -48,6 +48,8 @@ const EXPECTED_TOOLS = [
   'get_inference_edge',
   'update_inference_edge',
   'list_candidate_edges',
+  'claim_vertex_expansions',
+  'set_vertex_expansion_state',
   'claim_inference_edge',
   'claim_inference_edges',
   'release_inference_edge',
@@ -62,11 +64,11 @@ const EXPECTED_TOOLS = [
 ] as const;
 
 describe('MCP tool surface', () => {
-  it('exposes exactly the 26 agreed tools', () => {
+  it('exposes exactly the 28 agreed tools', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(26);
+    expect(names).toHaveLength(28);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -98,6 +100,15 @@ describe('MCP tool surface', () => {
     for (const tool of controller.list()) {
       expect(tool.mutating).toBe(!readOnly.has(tool.name));
     }
+    storage.close();
+  });
+
+  it('marks vertex expansion claim and settlement as mutating', () => {
+    const { controller, storage } = newController();
+    const byName = new Map(controller.list().map((tool) => [tool.name, tool]));
+
+    expect(byName.get('claim_vertex_expansions')?.mutating).toBe(true);
+    expect(byName.get('set_vertex_expansion_state')?.mutating).toBe(true);
     storage.close();
   });
 });

@@ -37,6 +37,81 @@ export const VertexSchema = z.object({
 export type Vertex = z.infer<typeof VertexSchema>;
 
 /**
+ * Planning lifecycle for reverse expansion of a Goal or State vertex. It is
+ * intentionally separate from the inference-edge lifecycle: expanding a
+ * vertex proposes its direct premises, while executing an edge verifies an
+ * already proposed inference step.
+ */
+export const VertexExpansionStateSchema = z.enum([
+  'Pending',
+  'Expanding',
+  'AwaitingContext',
+  'Expanded',
+  'Blocked',
+  'NotApplicable',
+]);
+export type VertexExpansionState = z.infer<typeof VertexExpansionStateSchema>;
+
+/** Exclusive reservation held while a Worker plans one vertex expansion. */
+export const VertexExpansionLeaseSchema = z.object({
+  leaseId: LeaseIdSchema,
+  vertexId: VertexIdSchema,
+  agentId: AgentIdSchema,
+  acquiredAt: IsoTimestampSchema,
+  expiresAt: IsoTimestampSchema,
+});
+export type VertexExpansionLease = z.infer<typeof VertexExpansionLeaseSchema>;
+
+/**
+ * Persisted scheduling state for one vertex. Active states always retain a
+ * lease, which lets several coordinators claim different nodes safely.
+ */
+export const VertexExpansionSchema = z
+  .object({
+    vertexId: VertexIdSchema,
+    state: VertexExpansionStateSchema,
+    lease: VertexExpansionLeaseSchema.optional(),
+    reason: z.string().min(1).max(2000).optional(),
+    updatedAt: IsoTimestampSchema,
+    updatedAtRevision: GraphRevisionSchema,
+  })
+  .superRefine((expansion, context) => {
+    const active = expansion.state === 'Expanding' || expansion.state === 'AwaitingContext';
+    if (active && expansion.lease === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lease'],
+        message: `${expansion.state} requires a lease`,
+      });
+    }
+    if (!active && expansion.lease !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lease'],
+        message: `${expansion.state} must not retain a lease`,
+      });
+    }
+    if (expansion.lease !== undefined && expansion.lease.vertexId !== expansion.vertexId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['lease', 'vertexId'],
+        message: 'lease vertexId must match expansion vertexId',
+      });
+    }
+    if (
+      (expansion.state === 'AwaitingContext' || expansion.state === 'Blocked') &&
+      expansion.reason === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reason'],
+        message: `${expansion.state} requires a reason`,
+      });
+    }
+  });
+export type VertexExpansion = z.infer<typeof VertexExpansionSchema>;
+
+/**
  * Edge lifecycle. Every state has exactly one documented entry path:
  * - Candidate  <- propose_inference_edge
  * - Leased     <- claim_inference_edge / claim_inference_edges

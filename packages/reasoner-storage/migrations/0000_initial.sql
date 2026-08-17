@@ -45,6 +45,26 @@ CREATE TABLE IF NOT EXISTS vertices (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_vertices_dedupe
   ON vertices (session_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 
+-- Reverse-planning state is deliberately separate from opaque vertex payloads
+-- and edge execution leases. A row marks whether a Goal/State is pending,
+-- actively expanding, waiting for context, or terminal for this planning run.
+CREATE TABLE IF NOT EXISTS vertex_expansions (
+  session_id          TEXT NOT NULL REFERENCES reasoning_sessions(session_id) ON DELETE CASCADE,
+  vertex_id           TEXT NOT NULL,
+  state               TEXT NOT NULL,
+  lease_id            TEXT,
+  agent_id            TEXT,
+  acquired_at         TEXT,
+  expires_at          TEXT,
+  reason              TEXT,
+  updated_at          TEXT NOT NULL,
+  updated_at_revision INTEGER NOT NULL,
+  PRIMARY KEY (session_id, vertex_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_vertex_expansions_state
+  ON vertex_expansions (session_id, state, vertex_id);
+
 CREATE TABLE IF NOT EXISTS inference_edges (
   session_id          TEXT NOT NULL REFERENCES reasoning_sessions(session_id) ON DELETE CASCADE,
   edge_id             TEXT NOT NULL,

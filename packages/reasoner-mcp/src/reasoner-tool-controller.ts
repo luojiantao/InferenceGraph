@@ -5,6 +5,7 @@ import {
   BlockInferenceEdgeInputSchema,
   ClaimInferenceEdgeInputSchema,
   ClaimInferenceEdgesInputSchema,
+  ClaimVertexExpansionsInputSchema,
   CompleteInferenceEdgeInputSchema,
   CreateReasoningSessionInputSchema,
   DeleteReasoningSessionInputSchema,
@@ -23,6 +24,7 @@ import {
   ListReasoningSessionsInputSchema,
   ProposeInferenceEdgeInputSchema,
   UpdateInferenceEdgeInputSchema,
+  SetVertexExpansionStateInputSchema,
   ReleaseInferenceEdgeInputSchema,
   AnswerEvidenceQuestionInputSchema,
   UpdateReasoningSessionMetadataInputSchema,
@@ -60,6 +62,7 @@ export type AnyReasonerTool = ReasonerToolDefinition<z.ZodTypeAny>;
 interface GraphReferenceInput {
   readonly sessionId?: SessionId;
   readonly vertexId?: VertexId;
+  readonly rootVertexId?: VertexId;
   readonly edgeId?: EdgeId;
   readonly sourceVertexIds?: readonly VertexId[];
   readonly targetVertexIds?: readonly VertexId[];
@@ -72,6 +75,8 @@ const VERTEX_REFERENCE_TOOLS = new Set([
   'get_context_for_vertex',
   'get_downstream_context_for_vertex',
   'get_reasoning_text_for_vertex',
+  'claim_vertex_expansions',
+  'set_vertex_expansion_state',
 ]);
 
 const EDGE_REFERENCE_TOOLS = new Set([
@@ -120,6 +125,13 @@ const resolveGraphReferenceInput = async <T extends object>(
     return ok({
       ...input,
       vertexId: resolveVertexReference(aliases.value, referenceInput.vertexId),
+    } as T);
+  }
+
+  if (toolName === 'claim_vertex_expansions' && referenceInput.rootVertexId !== undefined) {
+    return ok({
+      ...input,
+      rootVertexId: resolveVertexReference(aliases.value, referenceInput.rootVertexId),
     } as T);
   }
 
@@ -274,6 +286,24 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: false,
       inputSchema: ListCandidateEdgesInputSchema,
       handler: (input) => service.listCandidateEdges(input),
+    }),
+    define({
+      name: 'claim_vertex_expansions',
+      title: 'Claim vertex expansions',
+      description:
+        'Atomically selects and reserves up to maxVertices reverse-planning targets in the session strategy order. Claimed vertices are marked Expanding so other coordinators cannot duplicate the work.',
+      mutating: true,
+      inputSchema: ClaimVertexExpansionsInputSchema,
+      handler: (input) => service.claimVertexExpansions(input),
+    }),
+    define({
+      name: 'set_vertex_expansion_state',
+      title: 'Set vertex expansion state',
+      description:
+        'Settles a held vertex-expansion lease as Pending, AwaitingContext, Expanded or Blocked. The lease owner and revision must match.',
+      mutating: true,
+      inputSchema: SetVertexExpansionStateInputSchema,
+      handler: (input) => service.setVertexExpansionState(input),
     }),
     define({
       name: 'claim_inference_edge',

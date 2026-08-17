@@ -107,6 +107,38 @@ const migrateSessionMetadata = (db: DatabaseSync): void => {
   );
 };
 
+/**
+ * Backfills the reverse-planning lifecycle for databases created before
+ * vertex_expansions existed. Existing Goal and State vertices become Pending;
+ * Evidence is already grounded material and is therefore NotApplicable.
+ */
+const migrateVertexExpansions = (db: DatabaseSync): void => {
+  db.exec(
+    `INSERT INTO vertex_expansions (
+       session_id, vertex_id, state, lease_id, agent_id, acquired_at, expires_at,
+       reason, updated_at, updated_at_revision
+     )
+     SELECT
+       vertices.session_id,
+       vertices.vertex_id,
+       CASE WHEN vertices.kind = 'Evidence' THEN 'NotApplicable' ELSE 'Pending' END,
+       NULL,
+       NULL,
+       NULL,
+       NULL,
+       NULL,
+       vertices.created_at,
+       vertices.created_at_revision
+     FROM vertices
+     INNER JOIN reasoning_sessions
+       ON reasoning_sessions.session_id = vertices.session_id
+     LEFT JOIN vertex_expansions
+       ON vertex_expansions.session_id = vertices.session_id
+      AND vertex_expansions.vertex_id = vertices.vertex_id
+     WHERE vertex_expansions.vertex_id IS NULL`,
+  );
+};
+
 const migratedFormulaId = (
   sourceVertexIds: readonly string[],
   targetVertexId: string,
@@ -551,6 +583,7 @@ export const migrateStorage = (db: DatabaseSync): void => {
   try {
     migrateSessionMetadata(db);
     migrateReferenceIds(db);
+    migrateVertexExpansions(db);
     // The splitter writes formula_id, so make the column available first.
     migrateFormulaIds(db);
     splitLegacyInferenceEdges(db);

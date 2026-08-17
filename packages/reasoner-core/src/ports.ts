@@ -11,6 +11,7 @@ import type {
   Result,
   SessionId,
   Vertex,
+  VertexExpansion,
   VertexId,
   AgentId,
 } from '@reasoner/schema';
@@ -43,6 +44,8 @@ export interface GraphEventDraft {
  */
 export interface MutationDraft {
   readonly upsertVertices?: readonly Vertex[];
+  /** Durable reverse-planning status, independent from domain vertex content. */
+  readonly upsertVertexExpansions?: readonly VertexExpansion[];
   readonly upsertEdges?: readonly InferenceEdge[];
   readonly sessionPatch?: Partial<
     Pick<
@@ -79,6 +82,7 @@ export type MutationPlanner = (snapshot: GraphSnapshot, now: IsoTimestamp) => Re
 export interface CreateSessionRequest {
   readonly session: ReasoningSession;
   readonly goalVertex: Vertex;
+  readonly vertexExpansions: readonly VertexExpansion[];
   readonly events: readonly GraphEventDraft[];
 }
 

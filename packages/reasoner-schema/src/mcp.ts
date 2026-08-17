@@ -10,7 +10,13 @@ import {
   SessionIdSchema,
   VertexIdSchema,
 } from './ids.js';
-import { EdgeStateSchema, InferenceEdgeSchema, VertexKindSchema, VertexSchema } from './graph.js';
+import {
+  EdgeStateSchema,
+  InferenceEdgeSchema,
+  VertexExpansionSchema,
+  VertexKindSchema,
+  VertexSchema,
+} from './graph.js';
 import {
   GoalStateSchema,
   GraphEventSchema,
@@ -137,6 +143,7 @@ export const GetVertexOutputSchema = z.object({
   vertex: VertexSchema,
   incomingEdgeIds: z.array(EdgeIdSchema),
   outgoingEdgeIds: z.array(EdgeIdSchema),
+  expansion: VertexExpansionSchema,
 });
 
 // --- 11. update_vertex ---
@@ -224,7 +231,64 @@ export const ListCandidateEdgesOutputSchema = z.object({
   graphRevision: GraphRevisionSchema,
 });
 
-// --- 14. claim_inference_edge ---
+// --- 14. claim_vertex_expansions ---
+export const ClaimVertexExpansionsInputSchema = WriteCommandBase.extend({
+  /** Restrict scheduling to the reverse-dependency subgraph rooted here. */
+  rootVertexId: VertexIdSchema.optional(),
+  /** Kept batch-shaped so callers can raise parallelism later without a new API. */
+  maxVertices: z.number().int().positive().max(50).default(1),
+  /** Defaults to the session lease limit and can never exceed it. */
+  leaseSeconds: z.number().int().positive().max(86_400).optional(),
+  /** Excludes deeper nodes before reservation, avoiding immediately releasable claims. */
+  maxDepth: z.number().int().positive().max(1_000).optional(),
+});
+
+export const VertexExpansionClaimSchema = z.object({
+  leaseId: LeaseIdSchema,
+  vertex: VertexSchema,
+  expansion: VertexExpansionSchema,
+  depth: z.number().int().nonnegative(),
+  priority: z.number().finite(),
+  /** Position in the service-owned deterministic scheduling order. */
+  rank: z.number().int().nonnegative(),
+});
+
+export const ClaimVertexExpansionsOutputSchema = RevisionAck.extend({
+  sessionId: SessionIdSchema,
+  claims: z.array(VertexExpansionClaimSchema),
+});
+
+// --- 15. set_vertex_expansion_state ---
+export const SettableVertexExpansionStateSchema = z.enum([
+  'Pending',
+  'AwaitingContext',
+  'Expanded',
+  'Blocked',
+]);
+export type SettableVertexExpansionState = z.infer<typeof SettableVertexExpansionStateSchema>;
+
+export const SetVertexExpansionStateInputSchema = WriteCommandBase.extend({
+  vertexId: VertexIdSchema,
+  leaseId: LeaseIdSchema,
+  state: SettableVertexExpansionStateSchema,
+  reason: z.string().min(1).max(2000).optional(),
+}).superRefine((input, context) => {
+  if ((input.state === 'AwaitingContext' || input.state === 'Blocked') && input.reason === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['reason'],
+      message: `${input.state} requires a reason`,
+    });
+  }
+});
+
+export const SetVertexExpansionStateOutputSchema = RevisionAck.extend({
+  sessionId: SessionIdSchema,
+  vertex: VertexSchema,
+  expansion: VertexExpansionSchema,
+});
+
+// --- 16. claim_inference_edge ---
 export const ClaimInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseSeconds: z.number().int().positive().max(86_400).optional(),
@@ -235,7 +299,7 @@ export const ClaimInferenceEdgeOutputSchema = RevisionAck.extend({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 15. claim_inference_edges ---
+// --- 17. claim_inference_edges ---
 export const ClaimInferenceEdgesInputSchema = WriteCommandBase.extend({
   maxEdges: z.number().int().positive().max(50).default(5),
   strategy: SearchStrategySchema.optional(),
@@ -251,7 +315,7 @@ export const ClaimInferenceEdgesOutputSchema = RevisionAck.extend({
   ),
 });
 
-// --- 16. release_inference_edge ---
+// --- 18. release_inference_edge ---
 export const ReleaseInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema,
@@ -261,7 +325,7 @@ export const ReleaseInferenceEdgeOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 17. answer_evidence_question ---
+// --- 19. answer_evidence_question ---
 export const AnswerEvidenceQuestionInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   questionId: QuestionIdSchema,
@@ -272,7 +336,7 @@ export const AnswerEvidenceQuestionOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 18. complete_inference_edge ---
+// --- 20. complete_inference_edge ---
 export const CompleteInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema,
@@ -286,7 +350,7 @@ export const CompleteInferenceEdgeOutputSchema = RevisionAck.extend({
   session: ReasoningSessionSchema,
 });
 
-// --- 19. block_inference_edge ---
+// --- 21. block_inference_edge ---
 export const BlockInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseId: LeaseIdSchema.optional(),
@@ -296,7 +360,7 @@ export const BlockInferenceEdgeOutputSchema = RevisionAck.extend({
   edge: InferenceEdgeSchema,
 });
 
-// --- 20. get_context_for_vertex ---
+// --- 22. get_context_for_vertex ---
 export const GetContextForVertexInputSchema = z.object({
   sessionId: SessionIdSchema,
   vertexId: VertexIdSchema,
@@ -307,7 +371,7 @@ export const GetContextForVertexOutputSchema = z.object({
   context: VertexExpansionContextSchema,
 });
 
-// --- 21. get_downstream_context_for_vertex ---
+// --- 23. get_downstream_context_for_vertex ---
 export const GetDownstreamContextForVertexInputSchema = z.object({
   sessionId: SessionIdSchema,
   vertexId: VertexIdSchema,
@@ -316,11 +380,11 @@ export const GetDownstreamContextForVertexOutputSchema = z.object({
   context: VertexDownstreamContextSchema,
 });
 
-// --- 22. get_reasoning_text_for_vertex ---
+// --- 24. get_reasoning_text_for_vertex ---
 export const GetReasoningTextForVertexInputSchema = GetContextForVertexInputSchema;
 export const GetReasoningTextForVertexOutputSchema = VertexReasoningTextSchema;
 
-// --- 23. get_context_for_edge ---
+// --- 25. get_context_for_edge ---
 export const GetContextForEdgeInputSchema = z.object({
   sessionId: SessionIdSchema,
   edgeId: EdgeIdSchema,
@@ -331,7 +395,7 @@ export const GetContextForEdgeOutputSchema = z.object({
   context: EdgeExecutionContextSchema,
 });
 
-// --- 24. get_reasoning_context ---
+// --- 26. get_reasoning_context ---
 /**
  * Session-level read-only overview. It deliberately returns neither a single
  * vertex payload nor a single edge payload; use the entity context tools for those.
@@ -388,6 +452,10 @@ export const GetReasoningContextOutputSchema = z.object({
   snapshot: GraphSnapshotSchema,
   reasoningStructure: ReasoningStructureSchema,
   frontierEdgeIds: z.array(EdgeIdSchema),
+  /** Pending planning targets in the session-owned DFS/BFS/Priority order. */
+  expansionFrontierVertexIds: z.array(VertexIdSchema),
+  /** Vertices reserved by an active expansion lease or awaiting its context. */
+  activeExpansionVertexIds: z.array(VertexIdSchema),
   edgeCountByState: z.record(EdgeStateSchema, z.number().int().nonnegative()),
   events: z.array(GraphEventSchema),
   nextEventSeq: z.number().int().nonnegative(),
@@ -435,6 +503,11 @@ export type UpdateInferenceEdgeInput = z.infer<typeof UpdateInferenceEdgeInputSc
 export type UpdateInferenceEdgeOutput = z.infer<typeof UpdateInferenceEdgeOutputSchema>;
 export type ListCandidateEdgesInput = z.infer<typeof ListCandidateEdgesInputSchema>;
 export type ListCandidateEdgesOutput = z.infer<typeof ListCandidateEdgesOutputSchema>;
+export type ClaimVertexExpansionsInput = z.infer<typeof ClaimVertexExpansionsInputSchema>;
+export type VertexExpansionClaim = z.infer<typeof VertexExpansionClaimSchema>;
+export type ClaimVertexExpansionsOutput = z.infer<typeof ClaimVertexExpansionsOutputSchema>;
+export type SetVertexExpansionStateInput = z.infer<typeof SetVertexExpansionStateInputSchema>;
+export type SetVertexExpansionStateOutput = z.infer<typeof SetVertexExpansionStateOutputSchema>;
 export type ClaimInferenceEdgeInput = z.infer<typeof ClaimInferenceEdgeInputSchema>;
 export type ClaimInferenceEdgeOutput = z.infer<typeof ClaimInferenceEdgeOutputSchema>;
 export type ClaimInferenceEdgesInput = z.infer<typeof ClaimInferenceEdgesInputSchema>;

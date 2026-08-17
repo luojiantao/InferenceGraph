@@ -3,6 +3,7 @@ import {
   GraphEventSchema,
   InferenceEdgeSchema,
   ReasoningSessionSchema,
+  VertexExpansionSchema,
   VertexSchema,
   err,
   isErr,
@@ -21,6 +22,7 @@ import {
   type Result,
   type SessionId,
   type Vertex,
+  type VertexExpansion,
   type VertexId,
 } from '@reasoner/schema';
 import {
@@ -59,7 +61,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
   ) {}
 
   async createSession(request: CreateSessionRequest): Promise<Result<MutationOutcome>> {
-    const { session, goalVertex, events } = request;
+    const { session, goalVertex, vertexExpansions, events } = request;
     try {
       this.db.exec('BEGIN IMMEDIATE');
       const existing = this.db
@@ -102,6 +104,9 @@ export class SqliteReasonerRepository implements ReasonerRepository {
         );
 
       this.insertVertex(session.sessionId, goalVertex);
+      for (const expansion of vertexExpansions) {
+        this.upsertVertexExpansion(session.sessionId, expansion, session.graphRevision);
+      }
       const lastEventSeq = this.appendEvents(
         session.sessionId,
         session.graphRevision,
@@ -251,6 +256,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
 
       const hasChanges =
         (draft.value.upsertVertices?.length ?? 0) > 0 ||
+        (draft.value.upsertVertexExpansions?.length ?? 0) > 0 ||
         (draft.value.upsertEdges?.length ?? 0) > 0 ||
         draft.value.sessionPatch !== undefined ||
         draft.value.events.length > 0;
@@ -270,6 +276,9 @@ export class SqliteReasonerRepository implements ReasonerRepository {
 
       for (const vertex of draft.value.upsertVertices ?? []) {
         this.insertVertex(sessionId, vertex);
+      }
+      for (const expansion of draft.value.upsertVertexExpansions ?? []) {
+        this.upsertVertexExpansion(sessionId, expansion, nextRevision);
       }
       for (const edge of draft.value.upsertEdges ?? []) {
         this.upsertEdge(sessionId, edge, nextRevision);
@@ -371,6 +380,7 @@ export class SqliteReasonerRepository implements ReasonerRepository {
       for (const table of [
         'context_projections',
         'graph_events',
+        'vertex_expansions',
         'edge_leases',
         'evidence_questions',
         'edge_sources',
@@ -545,6 +555,44 @@ export class SqliteReasonerRepository implements ReasonerRepository {
       vertices.push(parsed.data);
     }
 
+    const expansionRows = this.db
+      .prepare('SELECT * FROM vertex_expansions WHERE session_id = ? ORDER BY vertex_id')
+      .all(session.sessionId) as Row[];
+    const vertexIds = new Set(vertices.map((vertex) => vertex.vertexId));
+    const vertexExpansions: VertexExpansion[] = [];
+    for (const row of expansionRows) {
+      const vertexId = asString(row['vertex_id']);
+      if (!vertexIds.has(vertexId as VertexId)) {
+        return err(
+          'StorageFailure',
+          `vertex_expansion row references missing vertex ${vertexId}`,
+          { vertexId },
+        );
+      }
+      const leaseId = asOptionalString(row['lease_id']);
+      const parsed = VertexExpansionSchema.safeParse({
+        vertexId,
+        state: asString(row['state']),
+        lease:
+          leaseId === undefined
+            ? undefined
+            : {
+                leaseId,
+                vertexId,
+                agentId: asString(row['agent_id']),
+                acquiredAt: asString(row['acquired_at']),
+                expiresAt: asString(row['expires_at']),
+              },
+        reason: asOptionalString(row['reason']),
+        updatedAt: asString(row['updated_at']),
+        updatedAtRevision: asNumber(row['updated_at_revision']),
+      });
+      if (!parsed.success) {
+        return err('StorageFailure', `corrupt vertex_expansion row ${vertexId}: ${parsed.error.message}`);
+      }
+      vertexExpansions.push(parsed.data);
+    }
+
     const edgeRows = this.db
       .prepare('SELECT * FROM inference_edges WHERE session_id = ? ORDER BY edge_id')
       .all(session.sessionId) as Row[];
@@ -629,11 +677,12 @@ export class SqliteReasonerRepository implements ReasonerRepository {
       edges.push(parsed.data);
     }
 
-    const snapshotHash = hashCanonical({ session, vertices, edges });
+    const snapshotHash = hashCanonical({ session, vertices, edges, vertexExpansions });
     return ok({
       session,
       vertices,
       edges,
+      vertexExpansions,
       graphRevision: session.graphRevision,
       snapshotHash,
     });
@@ -658,6 +707,41 @@ export class SqliteReasonerRepository implements ReasonerRepository {
         vertex.createdByAgentId,
         vertex.createdAt,
         vertex.createdAtRevision,
+      );
+  }
+
+  private upsertVertexExpansion(
+    sessionId: SessionId,
+    expansion: VertexExpansion,
+    revision: GraphRevision,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO vertex_expansions (
+           session_id, vertex_id, state, lease_id, agent_id, acquired_at, expires_at,
+           reason, updated_at, updated_at_revision
+         ) VALUES (?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(session_id, vertex_id) DO UPDATE SET
+           state = excluded.state,
+           lease_id = excluded.lease_id,
+           agent_id = excluded.agent_id,
+           acquired_at = excluded.acquired_at,
+           expires_at = excluded.expires_at,
+           reason = excluded.reason,
+           updated_at = excluded.updated_at,
+           updated_at_revision = excluded.updated_at_revision`,
+      )
+      .run(
+        sessionId,
+        expansion.vertexId,
+        expansion.state,
+        expansion.lease?.leaseId ?? null,
+        expansion.lease?.agentId ?? null,
+        expansion.lease?.acquiredAt ?? null,
+        expansion.lease?.expiresAt ?? null,
+        expansion.reason ?? null,
+        expansion.updatedAt,
+        revision,
       );
   }
 

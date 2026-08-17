@@ -1,0 +1,7 @@
+interface:
+  display_name: "InferenceGraph Codex Controller"
+  short_description: "Deterministic control plane for serial graph expansion."
+  default_prompt: "Use $inference-graph-sequential-subagent-expansion-codex-controller to expand this InferenceGraph goal with a validated Codex control plane."
+
+policy:
+  allow_implicit_invocation: false

@@ -15,6 +15,8 @@ import {
   type ClaimInferenceEdgeOutput,
   type ClaimInferenceEdgesInput,
   type ClaimInferenceEdgesOutput,
+  type ClaimVertexExpansionsInput,
+  type ClaimVertexExpansionsOutput,
   type CompleteInferenceEdgeInput,
   type CompleteInferenceEdgeOutput,
   type CreateReasoningSessionInput,
@@ -65,6 +67,8 @@ import {
   type ReleaseInferenceEdgeOutput,
   type Result,
   type SearchStrategy,
+  type SetVertexExpansionStateInput,
+  type SetVertexExpansionStateOutput,
   type SessionId,
   type UpdateReasoningSessionMetadataInput,
   type UpdateReasoningSessionMetadataOutput,
@@ -73,6 +77,8 @@ import {
   type UpdateVertexInput,
   type UpdateVertexOutput,
   type Vertex,
+  type VertexExpansion,
+  type VertexExpansionLease,
   type VertexReferenceId,
   type VertexExpansionContext,
   type VertexId,
@@ -102,6 +108,7 @@ import {
   vertexDedupeKey,
 } from './dedup.js';
 import { orderFrontier } from './search-strategy.js';
+import { orderVertexExpansionFrontier } from './vertex-expansion-strategy.js';
 import {
   checkLeaseHeld,
   computeExpiry,
@@ -111,6 +118,14 @@ import {
   reclaimEdge,
   releaseLease,
 } from './lease-coordinator.js';
+import {
+  checkVertexExpansionLease,
+  defaultVertexExpansion,
+  findExpiredVertexExpansions,
+  grantVertexExpansion,
+  requeueVertexExpansion,
+  settleVertexExpansion,
+} from './vertex-expansion-coordinator.js';
 import {
   computeEdgeContextHash,
   projectEdgeContext,
@@ -167,6 +182,10 @@ const isReservedReferenceId = (value: string, prefix: 'V' | 'E'): boolean =>
 
 const sameStringList = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
+
+const expansionForVertex = (snapshot: GraphSnapshot, vertex: Vertex): VertexExpansion =>
+  snapshot.vertexExpansions.find((expansion) => expansion.vertexId === vertex.vertexId) ??
+  defaultVertexExpansion(vertex);
 
 /**
  * Applies a complete question-list replacement while retaining answers for
@@ -306,6 +325,7 @@ export class ReasonerService {
     const created = await this.deps.repository.createSession({
       session,
       goalVertex,
+      vertexExpansions: [defaultVertexExpansion(goalVertex)],
       events: [
         {
           kind: 'SessionCreated',
@@ -459,12 +479,13 @@ export class ReasonerService {
     const outcome = await this.deps.repository.mutate(
       input.sessionId,
       input.baseGraphRevision,
-      (snapshot) => {
+      (snapshot, now) => {
         const active = assertActive(snapshot.session);
         if (isErr(active)) return active;
 
         const events: GraphEventDraft[] = [];
         const upsertEdges: InferenceEdge[] = [];
+        const upsertVertexExpansions: VertexExpansion[] = [];
         for (const edge of snapshot.edges) {
           if (edge.state !== 'Candidate' && edge.state !== 'Leased') continue;
           const { lease: _lease, ...rest } = edge;
@@ -475,6 +496,25 @@ export class ReasonerService {
             actorAgentId: input.agentId,
             edgeId: edge.edgeId,
             detail: { previousState: edge.state },
+          });
+        }
+
+        for (const expansion of snapshot.vertexExpansions) {
+          if (expansion.state !== 'Expanding' && expansion.state !== 'AwaitingContext') continue;
+          upsertVertexExpansions.push(
+            settleVertexExpansion(
+              expansion,
+              'Blocked',
+              now,
+              snapshot.graphRevision,
+              `session finished: ${input.reason}`,
+            ),
+          );
+          events.push({
+            kind: 'VertexExpansionBlocked',
+            actorAgentId: input.agentId,
+            vertexId: expansion.vertexId,
+            detail: { reason: 'session finished' },
           });
         }
 
@@ -491,6 +531,7 @@ export class ReasonerService {
 
         return ok<MutationDraft>({
           upsertEdges,
+          upsertVertexExpansions,
           sessionPatch: { goalState: input.goalState, finishedReason: input.reason },
           events,
         });
@@ -568,6 +609,7 @@ export class ReasonerService {
 
         return ok<MutationDraft>({
           upsertVertices: [vertex],
+          upsertVertexExpansions: [defaultVertexExpansion(vertex)],
           events: [{ kind: 'VertexAdded', actorAgentId: input.agentId, vertexId }],
         });
       },
@@ -600,6 +642,7 @@ export class ReasonerService {
       vertex,
       incomingEdgeIds: [...(index.incomingEdgeIds.get(input.vertexId) ?? [])],
       outgoingEdgeIds: [...(index.outgoingEdgeIds.get(input.vertexId) ?? [])],
+      expansion: expansionForVertex(snapshot.value, vertex),
     });
   }
 
@@ -992,6 +1035,225 @@ export class ReasonerService {
       .map((entry) => index.edgeById.get(entry.edgeId))
       .filter((edge): edge is InferenceEdge => edge !== undefined);
     return ok({ edges, graphRevision: snapshot.value.graphRevision });
+  }
+
+  /**
+   * Atomically picks and reserves reverse-planning vertices. The selection order
+   * belongs to InferenceGraph, so every concurrent coordinator observes the
+   * session's DFS/BFS/Priority policy instead of maintaining a private queue.
+   */
+  async claimVertexExpansions(
+    input: ClaimVertexExpansionsInput,
+  ): Promise<Result<ClaimVertexExpansionsOutput>> {
+    const claimed = new Map<
+      VertexId,
+      { readonly leaseId: LeaseId; readonly depth: number; readonly priority: number; readonly rank: number }
+    >();
+
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot, now) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const rootVertexId = input.rootVertexId ?? snapshot.session.goalVertexId;
+        const rootVertex = snapshot.vertices.find((vertex) => vertex.vertexId === rootVertexId);
+        if (rootVertex === undefined) {
+          return err('VertexNotFound', `root vertex ${rootVertexId} not found`, { vertexId: rootVertexId });
+        }
+        if (rootVertex.kind === 'Evidence') {
+          return err('InvalidInput', `Evidence vertex ${rootVertexId} cannot be expanded`, {
+            vertexId: rootVertexId,
+          });
+        }
+
+        const events: GraphEventDraft[] = [];
+        const upsertVertexExpansions: VertexExpansion[] = [];
+        const effectiveByVertexId = new Map(
+          snapshot.vertexExpansions.map((expansion) => [expansion.vertexId, expansion]),
+        );
+
+        // Reclaim both running and context-waiting leases in the same revision
+        // as the new reservation, exactly like inference-edge claims do.
+        for (const expired of findExpiredVertexExpansions(snapshot.vertexExpansions, now)) {
+          const requeued = requeueVertexExpansion(
+            expired,
+            now,
+            snapshot.graphRevision,
+            'expansion lease expired',
+          );
+          effectiveByVertexId.set(requeued.vertexId, requeued);
+          upsertVertexExpansions.push(requeued);
+          events.push({
+            kind: 'VertexExpansionLeaseExpired',
+            actorAgentId: input.agentId,
+            vertexId: expired.vertexId,
+            detail: {
+              previousAgentId: expired.lease?.agentId ?? null,
+              previousLeaseId: expired.lease?.leaseId ?? null,
+            },
+          });
+        }
+
+        const effectiveSnapshot: GraphSnapshot = {
+          ...snapshot,
+          vertexExpansions: [...effectiveByVertexId.values()],
+        };
+        // Reverse-expansion order is a durable session policy. Callers cannot
+        // override it per request, otherwise two coordinators could silently
+        // follow different traversal algorithms for the same graph.
+        const strategy = snapshot.session.strategy;
+        const targets = orderVertexExpansionFrontier(effectiveSnapshot, rootVertexId, strategy)
+          .filter((entry) => input.maxDepth === undefined || entry.depth <= input.maxDepth)
+          .slice(0, input.maxVertices);
+        const seconds = Math.min(
+          input.leaseSeconds ?? snapshot.session.budget.maxLeaseSeconds,
+          snapshot.session.budget.maxLeaseSeconds,
+        );
+
+        for (const target of targets) {
+          const vertex = snapshot.vertices.find((candidate) => candidate.vertexId === target.vertexId);
+          if (vertex === undefined) continue;
+          const current = effectiveByVertexId.get(target.vertexId) ?? defaultVertexExpansion(vertex);
+          const leaseId = this.deps.ids.newId('vertex-expansion-lease') as LeaseId;
+          const lease: VertexExpansionLease = {
+            leaseId,
+            vertexId: target.vertexId,
+            agentId: input.agentId,
+            acquiredAt: now,
+            expiresAt: computeExpiry(now, seconds),
+          };
+          const expansion = grantVertexExpansion(current, lease, now, snapshot.graphRevision);
+          effectiveByVertexId.set(target.vertexId, expansion);
+          upsertVertexExpansions.push(expansion);
+          claimed.set(target.vertexId, { ...target, leaseId });
+          events.push({
+            kind: 'VertexExpansionClaimed',
+            actorAgentId: input.agentId,
+            vertexId: target.vertexId,
+            detail: {
+              leaseId,
+              strategy,
+              rootVertexId,
+              depth: target.depth,
+              priority: target.priority,
+              rank: target.rank,
+            },
+          });
+        }
+
+        return ok<MutationDraft>({ upsertVertexExpansions, events });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+
+    await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    const claims: ClaimVertexExpansionsOutput['claims'] = [];
+    for (const [vertexId, metadata] of claimed) {
+      const vertex = outcome.value.snapshot.vertices.find((candidate) => candidate.vertexId === vertexId);
+      const expansion = outcome.value.snapshot.vertexExpansions.find(
+        (candidate) => candidate.vertexId === vertexId,
+      );
+      if (vertex === undefined || expansion === undefined) {
+        return err('StorageFailure', `claimed vertex ${vertexId} was not persisted`, { vertexId });
+      }
+      claims.push({
+        leaseId: metadata.leaseId,
+        vertex,
+        expansion,
+        depth: metadata.depth,
+        priority: metadata.priority,
+        rank: metadata.rank,
+      });
+    }
+
+    return ok({
+      sessionId: input.sessionId,
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      claims,
+    });
+  }
+
+  /** Settles a held planning lease without exposing a second local scheduler. */
+  async setVertexExpansionState(
+    input: SetVertexExpansionStateInput,
+  ): Promise<Result<SetVertexExpansionStateOutput>> {
+    let settled: VertexExpansion | null = null;
+
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot, now) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const vertex = snapshot.vertices.find((candidate) => candidate.vertexId === input.vertexId);
+        if (vertex === undefined) {
+          return err('VertexNotFound', `vertex ${input.vertexId} not found`, {
+            vertexId: input.vertexId,
+          });
+        }
+        const expansion = expansionForVertex(snapshot, vertex);
+        const held = checkVertexExpansionLease(expansion, input.leaseId, input.agentId, now);
+        if (!held.ok) return err(held.reason, held.message, { vertexId: input.vertexId });
+
+        const next = settleVertexExpansion(
+          expansion,
+          input.state,
+          now,
+          snapshot.graphRevision,
+          input.reason,
+        );
+        settled = next;
+        const kind =
+          input.state === 'Pending'
+            ? 'VertexExpansionReleased'
+            : input.state === 'AwaitingContext'
+              ? 'VertexExpansionDeferred'
+              : input.state === 'Expanded'
+                ? 'VertexExpansionCompleted'
+                : 'VertexExpansionBlocked';
+        return ok<MutationDraft>({
+          upsertVertexExpansions: [next],
+          events: [
+            {
+              kind,
+              actorAgentId: input.agentId,
+              vertexId: input.vertexId,
+              detail: {
+                leaseId: input.leaseId,
+                state: input.state,
+                ...(input.reason === undefined ? {} : { reason: input.reason }),
+              },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+    if (settled === null) return err('StorageFailure', 'expansion settlement produced no state');
+
+    await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    const vertex = outcome.value.snapshot.vertices.find(
+      (candidate) => candidate.vertexId === input.vertexId,
+    );
+    const expansion = outcome.value.snapshot.vertexExpansions.find(
+      (candidate) => candidate.vertexId === input.vertexId,
+    );
+    if (vertex === undefined || expansion === undefined) {
+      return err('StorageFailure', `settled vertex ${input.vertexId} was not persisted`, {
+        vertexId: input.vertexId,
+      });
+    }
+    return ok({
+      sessionId: input.sessionId,
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      vertex,
+      expansion,
+    });
   }
 
   async claimInferenceEdge(
@@ -1609,6 +1871,14 @@ export class ReasonerService {
 
     const index = buildGraphIndex(snapshot.value);
     const frontier = orderFrontier(index, snapshot.value.session.strategy);
+    const expansionFrontier = orderVertexExpansionFrontier(
+      snapshot.value,
+      snapshot.value.session.goalVertexId,
+      snapshot.value.session.strategy,
+    );
+    const activeExpansionVertexIds = snapshot.value.vertexExpansions
+      .filter((expansion) => expansion.state === 'Expanding' || expansion.state === 'AwaitingContext')
+      .map((expansion) => expansion.vertexId);
     const counts: Record<string, number> = {};
     for (const edge of snapshot.value.edges) {
       counts[edge.state] = (counts[edge.state] ?? 0) + 1;
@@ -1619,6 +1889,8 @@ export class ReasonerService {
       snapshot: snapshot.value,
       reasoningStructure: buildReasoningStructure(snapshot.value),
       frontierEdgeIds: frontier.map((entry) => entry.edgeId),
+      expansionFrontierVertexIds: expansionFrontier.map((entry) => entry.vertexId),
+      activeExpansionVertexIds,
       edgeCountByState: counts,
       events: [...events.value],
       nextEventSeq: last === undefined ? input.afterEventSeq : last.eventSeq,

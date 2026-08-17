@@ -10,4 +10,6 @@ export * from './reasoning-context-renderer.js';
 export * from './reasoning-structure.js';
 export * from './goal-evaluator.js';
 export * from './lease-coordinator.js';
+export * from './vertex-expansion-coordinator.js';
+export * from './vertex-expansion-strategy.js';
 export * from './reasoner-service.js';

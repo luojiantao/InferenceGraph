@@ -21,3 +21,9 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local state and Python caches created by the InferenceGraph controller.
+.inference-graph/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
