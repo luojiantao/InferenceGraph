@@ -2,7 +2,7 @@ import type { ElementDefinition } from 'cytoscape';
 import type { EdgeId, GraphSnapshot, VertexId } from '@reasoner/schema';
 import { describe, expect, it } from 'vitest';
 import { buildArcId } from './graph-aliases.js';
-import { buildGraphCanvasElements } from './graph-canvas-elements.js';
+import { buildExpansionStatusNodeId, buildGraphCanvasElements } from './graph-canvas-elements.js';
 
 const vertexId = (value: string): VertexId => value as VertexId;
 const edgeId = (value: string): EdgeId => value as EdgeId;
@@ -10,6 +10,60 @@ const dataOf = (element: ElementDefinition): Record<string, unknown> =>
   element.data as Record<string, unknown>;
 
 describe('buildGraphCanvasElements', () => {
+  it('gives an actively expanding vertex a dedicated graph state and class', () => {
+    const expanding = vertexId('expanding');
+    const pending = vertexId('pending');
+    const snapshot = {
+      session: { goalVertexId: pending },
+      vertices: [
+        {
+          vertexId: expanding,
+          referenceId: 'V1',
+          kind: 'State',
+          label: 'Collect machine logs',
+          createdAtRevision: 1,
+        },
+        {
+          vertexId: pending,
+          referenceId: 'V2',
+          kind: 'Goal',
+          label: 'Find the root cause',
+          createdAtRevision: 1,
+        },
+      ],
+      edges: [],
+      vertexExpansions: [
+        { vertexId: expanding, state: 'Expanding' },
+        { vertexId: pending, state: 'Pending' },
+      ],
+    } as unknown as GraphSnapshot;
+
+    const elements = buildGraphCanvasElements(snapshot, [], null, 'All');
+    const expandingNode = elements.find((element) => dataOf(element).id === expanding);
+    const pendingNode = elements.find((element) => dataOf(element).id === pending);
+    const expandingStatusNode = elements.find(
+      (element) => dataOf(element).id === buildExpansionStatusNodeId(expanding),
+    );
+
+    expect(dataOf(expandingNode!)).toMatchObject({
+      expansionState: 'Expanding',
+      expansionLabel: '⟳ 展开中',
+      label: 'V1: Collect machine logs',
+    });
+    expect(String(expandingNode!.classes)).toContain('expansion-Expanding has-expansion-status');
+    expect(dataOf(expandingStatusNode!)).toMatchObject({
+      vertexId: expanding,
+      label: '⟳ 展开中',
+      expansionState: 'Expanding',
+    });
+    expect(String(expandingStatusNode!.classes)).toContain('expansion-status-Expanding');
+    expect(dataOf(pendingNode!)).toMatchObject({
+      expansionState: 'Pending',
+      expansionLabel: '○ 待展开',
+      label: 'V2: Find the root cause',
+    });
+  });
+
   it('renders every independent inference edge as one direct labelled arrow', () => {
     const firstEdge = edgeId('first-edge');
     const secondEdge = edgeId('second-edge');
@@ -104,8 +158,8 @@ describe('buildGraphCanvasElements', () => {
       ]),
     );
     expect(arrows).toHaveLength(3);
-    expect(elements.some((element) => String(dataOf(element).id).startsWith('inference-edge::'))).toBe(
-      false,
-    );
+    expect(
+      elements.some((element) => String(dataOf(element).id).startsWith('inference-edge::')),
+    ).toBe(false);
   });
 });

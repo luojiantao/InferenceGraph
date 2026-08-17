@@ -26,6 +26,23 @@ const EDGE_COLORS: Record<string, string> = {
   Invalid: '#8b2f6b',
 };
 
+/** Positions native Cytoscape status nodes within their vertex's reserved lower row. */
+const positionExpansionStatusNodes = (cy: Core): void => {
+  cy.nodes('.expansion-status').forEach((statusNode) => {
+    const vertexId = statusNode.data('vertexId');
+    if (typeof vertexId !== 'string') return;
+
+    const vertex = cy.getElementById(vertexId);
+    if (vertex.empty()) return;
+
+    const position = vertex.position();
+    statusNode.position({
+      x: position.x,
+      y: position.y + vertex.outerHeight() / 2 - 14,
+    });
+  });
+};
+
 export const GraphCanvas = (): ReactElement => {
   const container = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -55,7 +72,6 @@ export const GraphCanvas = (): ReactElement => {
           ),
     [view, selectedVertexId, graphScope],
   );
-
   useEffect(() => {
     if (container.current === null) return;
 
@@ -89,6 +105,94 @@ export const GraphCanvas = (): ReactElement => {
           selector: 'node.goal',
           // Blue marks the session goal; yellow is reserved for selected relations.
           style: { 'border-color': '#6fa8ff', 'border-width': 3 },
+        },
+        {
+          selector: 'node.vertex.has-expansion-status',
+          style: {
+            // Reserve a lower row for the native Cytoscape status node.
+            padding: '22px',
+            'text-margin-y': -8,
+          },
+        },
+        {
+          selector: 'node.expansion-status',
+          style: {
+            shape: 'round-rectangle',
+            label: 'data(label)',
+            'background-color': '#1f2933',
+            'border-width': 1,
+            'font-size': 10,
+            'font-weight': 'bold',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            width: 'label',
+            height: 'label',
+            padding: '3px',
+            'z-index': 20,
+          },
+        },
+        {
+          selector: 'node.expansion-status.expansion-status-Pending',
+          style: { color: '#b9c3d1', 'border-color': '#64748b' },
+        },
+        {
+          selector: 'node.expansion-status.expansion-status-Expanding',
+          style: {
+            color: '#ffd166',
+            'background-color': '#382d17',
+            'border-color': '#f5c451',
+          },
+        },
+        {
+          selector: 'node.expansion-status.expansion-status-AwaitingContext',
+          style: {
+            color: '#f4dda6',
+            'background-color': '#312a1c',
+            'border-color': '#d6a13a',
+          },
+        },
+        {
+          selector: 'node.expansion-status.expansion-status-Expanded',
+          style: { color: '#a9e3c3', 'border-color': '#398463' },
+        },
+        {
+          selector: 'node.expansion-status.expansion-status-Blocked',
+          style: {
+            color: '#ffd8d2',
+            'background-color': '#352323',
+            'border-color': '#d95c4a',
+          },
+        },
+        {
+          selector: 'node.vertex.expansion-Expanding',
+          style: {
+            'background-color': '#382d17',
+            'border-color': '#f5c451',
+            'border-width': 4,
+            'underlay-color': '#f5c451',
+            'underlay-opacity': 0.24,
+            'underlay-padding': 6,
+          },
+        },
+        {
+          selector: 'node.vertex.expansion-AwaitingContext',
+          style: {
+            'background-color': '#312a1c',
+            'border-color': '#d6a13a',
+            'border-width': 3,
+          },
+        },
+        {
+          selector: 'node.vertex.expansion-Expanded',
+          style: { 'border-color': '#398463', 'border-width': 2 },
+        },
+        {
+          selector: 'node.vertex.expansion-Blocked',
+          style: {
+            'background-color': '#352323',
+            'border-color': '#d95c4a',
+            'border-width': 3,
+          },
         },
         {
           selector: 'edge.inference-edge',
@@ -144,6 +248,9 @@ export const GraphCanvas = (): ReactElement => {
       autounselectify: true,
     });
 
+    cy.on('position', 'node.vertex', () => positionExpansionStatusNodes(cy));
+    cy.on('layoutstop', () => positionExpansionStatusNodes(cy));
+
     cy.on('tap', 'edge.inference-edge', (event) =>
       selectEdge(event.target.data('inferenceEdgeId') as EdgeId, event.target.id()),
     );
@@ -173,7 +280,9 @@ export const GraphCanvas = (): ReactElement => {
       const incoming = new Set(elements.map((element) => String(element.data.id)));
       const removed = cy.elements().filter((element) => !incoming.has(element.id()));
       if (removed.nonempty()) {
-        topologyChanged = true;
+        topologyChanged = removed
+          .filter((element) => !element.hasClass('expansion-status'))
+          .nonempty();
         removed.remove();
       }
 
@@ -186,7 +295,7 @@ export const GraphCanvas = (): ReactElement => {
           existing.classes(String(element.classes ?? ''));
         } else {
           cy.add(element);
-          topologyChanged = true;
+          topologyChanged ||= !String(element.classes ?? '').includes('expansion-status');
         }
       }
     });
@@ -196,21 +305,23 @@ export const GraphCanvas = (): ReactElement => {
      * Re-laying out on every poll would refit the viewport and fight the user's
      * own pan and zoom.
      */
-    if (topologyChanged && elements.length > 0) {
-      cy.layout(DAGRE_LAYOUT).run();
+    const graphElements = cy.elements().not('.expansion-status');
+    if (topologyChanged && graphElements.nonempty()) {
+      graphElements.layout(DAGRE_LAYOUT).run();
       if (
         !hasFittedRef.current ||
         lastViewportScopeRef.current !== viewportScope ||
         lastSessionIdRef.current !== renderedSessionId
       ) {
-        if (cy.nodes().length === 1) {
-          cy.center(cy.elements());
+        if (graphElements.nodes().length === 1) {
+          cy.center(graphElements);
         } else {
-          cy.fit(cy.elements(), 48);
+          cy.fit(graphElements, 48);
         }
         hasFittedRef.current = true;
       }
     }
+    positionExpansionStatusNodes(cy);
     lastViewportScopeRef.current = viewportScope;
     lastSessionIdRef.current = renderedSessionId;
   }, [elements, renderedSessionId, viewportScope]);

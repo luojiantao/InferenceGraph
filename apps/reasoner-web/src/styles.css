@@ -604,6 +604,37 @@ button:disabled {
   font-size: 12px;
   border: 1px solid var(--line);
 }
+.expansion-chip {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+}
+.expansion-chip.expansion-Pending {
+  color: #b9c3d1;
+  border-color: #64748b;
+}
+.expansion-chip.expansion-Expanding {
+  color: #fff3c4;
+  background: #382d17;
+  border-color: #f5c451;
+}
+.expansion-chip.expansion-AwaitingContext {
+  color: #f4dda6;
+  background: #312a1c;
+  border-color: #d6a13a;
+}
+.expansion-chip.expansion-Expanded {
+  color: #a9e3c3;
+  border-color: #398463;
+}
+.expansion-chip.expansion-Blocked {
+  color: #ffd8d2;
+  background: #352323;
+  border-color: #d95c4a;
+}
+.expansion-chip.expansion-NotApplicable {
+  color: var(--muted);
+}
 .goal-CandidateFound {
   color: var(--candidate);
   border-color: var(--candidate);

@@ -4,6 +4,10 @@ import { useGraphStore, type GraphScope } from '../state/graph-store.js';
 import { ReasonerRequestError, reasonerApi } from '../api/client.js';
 import { buildGraphAliases } from './graph-aliases.js';
 import { buildIncomingInferenceFormulas } from './inference-formulas.js';
+import {
+  fallbackVertexExpansionState,
+  vertexExpansionStateLabel,
+} from './vertex-expansion-status.js';
 
 const SCOPE_OPTIONS: readonly { readonly id: GraphScope; readonly label: string }[] = [
   { id: 'All', label: '完整图' },
@@ -64,6 +68,9 @@ export const VertexInspector = (): ReactElement => {
   const aliases = buildGraphAliases(view.snapshot);
   const vertexAlias = aliases.vertexById.get(vertex.vertexId) ?? vertex.vertexId;
   const isGoal = vertex.vertexId === view.snapshot.session.goalVertexId;
+  const expansionState =
+    (view.snapshot.vertexExpansions ?? []).find((item) => item.vertexId === vertex.vertexId)
+      ?.state ?? fallbackVertexExpansionState(vertex.kind);
 
   const openEditor = (): void => {
     setEditLabel(vertex.label);
@@ -196,6 +203,12 @@ export const VertexInspector = (): ReactElement => {
       <dl className="kv">
         <dt>类型</dt>
         <dd>{vertex.kind}</dd>
+        <dt>展开状态</dt>
+        <dd>
+          <span className={'chip expansion-chip expansion-' + expansionState}>
+            {vertexExpansionStateLabel[expansionState]}
+          </span>
+        </dd>
         <dt>创建者</dt>
         <dd>{vertex.createdByAgentId}</dd>
         <dt>创建修订</dt>
