@@ -67,6 +67,8 @@ import {
   type ReleaseInferenceEdgeOutput,
   type Result,
   type SearchStrategy,
+  type RequeueVertexExpansionInput,
+  type RequeueVertexExpansionOutput,
   type SetVertexExpansionStateInput,
   type SetVertexExpansionStateOutput,
   type SessionId,
@@ -1244,6 +1246,90 @@ export class ReasonerService {
     );
     if (vertex === undefined || expansion === undefined) {
       return err('StorageFailure', `settled vertex ${input.vertexId} was not persisted`, {
+        vertexId: input.vertexId,
+      });
+    }
+    return ok({
+      sessionId: input.sessionId,
+      graphRevision: outcome.value.graphRevision,
+      lastEventSeq: outcome.value.lastEventSeq,
+      vertex,
+      expansion,
+    });
+  }
+
+  /**
+   * Explicitly returns a Blocked reverse-planning target to the Pending frontier.
+   * This is intentionally separate from ordinary claiming so terminal failures
+   * do not retry unless an operator records a recovery reason.
+   */
+  async requeueVertexExpansion(
+    input: RequeueVertexExpansionInput,
+  ): Promise<Result<RequeueVertexExpansionOutput>> {
+    let requeued: VertexExpansion | null = null;
+
+    const outcome = await this.deps.repository.mutate(
+      input.sessionId,
+      input.baseGraphRevision,
+      (snapshot, now) => {
+        const active = assertActive(snapshot.session);
+        if (isErr(active)) return active;
+
+        const vertex = snapshot.vertices.find((candidate) => candidate.vertexId === input.vertexId);
+        if (vertex === undefined) {
+          return err('VertexNotFound', `vertex ${input.vertexId} not found`, {
+            vertexId: input.vertexId,
+          });
+        }
+        if (vertex.kind === 'Evidence') {
+          return err('InvalidInput', `Evidence vertex ${input.vertexId} cannot be requeued`, {
+            vertexId: input.vertexId,
+          });
+        }
+
+        const expansion = expansionForVertex(snapshot, vertex);
+        if (expansion.state !== 'Blocked') {
+          return err('InvalidInput', `vertex ${input.vertexId} is ${expansion.state}, not Blocked`, {
+            vertexId: input.vertexId,
+            state: expansion.state,
+          });
+        }
+
+        const next = requeueVertexExpansion(
+          expansion,
+          now,
+          snapshot.graphRevision,
+          input.reason,
+        );
+        requeued = next;
+        return ok<MutationDraft>({
+          upsertVertexExpansions: [next],
+          events: [
+            {
+              kind: 'VertexExpansionReleased',
+              actorAgentId: input.agentId,
+              vertexId: input.vertexId,
+              detail: {
+                previousState: 'Blocked',
+                reason: input.reason,
+              },
+            },
+          ],
+        });
+      },
+    );
+    if (isErr(outcome)) return outcome;
+    if (requeued === null) return err('StorageFailure', 'vertex expansion requeue produced no state');
+
+    await this.flushAudit(input.sessionId, outcome.value.lastEventSeq);
+    const vertex = outcome.value.snapshot.vertices.find(
+      (candidate) => candidate.vertexId === input.vertexId,
+    );
+    const expansion = outcome.value.snapshot.vertexExpansions.find(
+      (candidate) => candidate.vertexId === input.vertexId,
+    );
+    if (vertex === undefined || expansion === undefined) {
+      return err('StorageFailure', `requeued vertex ${input.vertexId} was not persisted`, {
         vertexId: input.vertexId,
       });
     }

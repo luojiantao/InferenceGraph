@@ -288,7 +288,19 @@ export const SetVertexExpansionStateOutputSchema = RevisionAck.extend({
   expansion: VertexExpansionSchema,
 });
 
-// --- 16. claim_inference_edge ---
+// --- 16. requeue_vertex_expansion ---
+/** Explicitly returns a previously Blocked planning target to the Pending frontier. */
+export const RequeueVertexExpansionInputSchema = WriteCommandBase.extend({
+  vertexId: VertexIdSchema,
+  reason: z.string().min(1).max(2000),
+});
+export const RequeueVertexExpansionOutputSchema = RevisionAck.extend({
+  sessionId: SessionIdSchema,
+  vertex: VertexSchema,
+  expansion: VertexExpansionSchema,
+});
+
+// --- 17. claim_inference_edge ---
 export const ClaimInferenceEdgeInputSchema = WriteCommandBase.extend({
   edgeId: EdgeIdSchema,
   leaseSeconds: z.number().int().positive().max(86_400).optional(),
@@ -508,6 +520,8 @@ export type VertexExpansionClaim = z.infer<typeof VertexExpansionClaimSchema>;
 export type ClaimVertexExpansionsOutput = z.infer<typeof ClaimVertexExpansionsOutputSchema>;
 export type SetVertexExpansionStateInput = z.infer<typeof SetVertexExpansionStateInputSchema>;
 export type SetVertexExpansionStateOutput = z.infer<typeof SetVertexExpansionStateOutputSchema>;
+export type RequeueVertexExpansionInput = z.infer<typeof RequeueVertexExpansionInputSchema>;
+export type RequeueVertexExpansionOutput = z.infer<typeof RequeueVertexExpansionOutputSchema>;
 export type ClaimInferenceEdgeInput = z.infer<typeof ClaimInferenceEdgeInputSchema>;
 export type ClaimInferenceEdgeOutput = z.infer<typeof ClaimInferenceEdgeOutputSchema>;
 export type ClaimInferenceEdgesInput = z.infer<typeof ClaimInferenceEdgesInputSchema>;

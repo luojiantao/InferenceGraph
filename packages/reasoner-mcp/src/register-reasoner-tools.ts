@@ -1,7 +1,27 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { ZodRawShape } from 'zod';
+import type { ZodRawShape, ZodTypeAny } from 'zod';
 import { isErr } from '@reasoner/schema';
 import type { ReasonerToolController } from './reasoner-tool-controller.js';
+
+type ShapeBearingSchema = ZodTypeAny & {
+  readonly shape?: ZodRawShape;
+  innerType?: () => ZodTypeAny;
+};
+
+const getMcpInputSchemaShape = (inputSchema: ZodTypeAny): ZodRawShape => {
+  let schema = inputSchema as ShapeBearingSchema;
+  while (schema.shape === undefined && typeof schema.innerType === 'function') {
+    const innerSchema = schema.innerType() as ShapeBearingSchema;
+    if (innerSchema === schema) break;
+    schema = innerSchema;
+  }
+
+  if (schema.shape === undefined) {
+    throw new Error('Reasoner MCP tool input schema must resolve to a ZodObject');
+  }
+
+  return schema.shape;
+};
 
 /**
  * Registers every controller tool on an MCP server.
@@ -15,8 +35,8 @@ export const registerReasonerTools = (
   controller: ReasonerToolController,
 ): void => {
   for (const tool of controller.list()) {
-    // The SDK expects a raw Zod shape; every tool input schema is an object.
-    const shape = (tool.inputSchema as unknown as { shape?: ZodRawShape }).shape ?? {};
+    // Refined Zod objects are wrapped in ZodEffects; MCP still needs their original raw shape.
+    const shape = getMcpInputSchemaShape(tool.inputSchema);
 
     server.registerTool(
       tool.name,

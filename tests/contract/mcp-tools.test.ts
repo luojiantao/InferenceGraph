@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ReasonerService, type Clock, type IdGenerator } from '@reasoner/core';
 import { createStorage } from '@reasoner/storage';
-import { createReasonerToolController } from '@reasoner/mcp';
+import { createReasonerToolController, registerReasonerTools } from '@reasoner/mcp';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { GetReasoningContextOutputSchema, isErr, isOk } from '@reasoner/schema';
 
 class FixedClock implements Clock {
@@ -50,6 +51,7 @@ const EXPECTED_TOOLS = [
   'list_candidate_edges',
   'claim_vertex_expansions',
   'set_vertex_expansion_state',
+  'requeue_vertex_expansion',
   'claim_inference_edge',
   'claim_inference_edges',
   'release_inference_edge',
@@ -68,7 +70,7 @@ describe('MCP tool surface', () => {
     const { controller, storage } = newController();
     const names = controller.names();
 
-    expect(names).toHaveLength(28);
+    expect(names).toHaveLength(29);
     expect([...names].sort()).toEqual([...EXPECTED_TOOLS].sort());
     storage.close();
   });
@@ -80,6 +82,40 @@ describe('MCP tool surface', () => {
       expect(tool.description.length).toBeGreaterThan(0);
       expect(tool.inputSchema).toBeDefined();
     }
+    storage.close();
+  });
+
+
+  it('preserves fields for refined tool schemas during MCP registration', () => {
+    const { controller, storage } = newController();
+    const schemas = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool: (
+        name: string,
+        definition: { inputSchema?: Record<string, unknown> },
+      ): void => {
+        schemas.set(name, definition.inputSchema ?? {});
+      },
+    } as unknown as McpServer;
+
+    registerReasonerTools(server, controller);
+
+    expect(Object.keys(schemas.get('update_vertex') ?? {})).toEqual(
+      expect.arrayContaining(['sessionId', 'baseGraphRevision', 'agentId', 'vertexId']),
+    );
+    expect(Object.keys(schemas.get('update_inference_edge') ?? {})).toEqual(
+      expect.arrayContaining(['sessionId', 'baseGraphRevision', 'agentId', 'edgeId']),
+    );
+    expect(Object.keys(schemas.get('set_vertex_expansion_state') ?? {})).toEqual(
+      expect.arrayContaining([
+        'sessionId',
+        'baseGraphRevision',
+        'agentId',
+        'vertexId',
+        'leaseId',
+        'state',
+      ]),
+    );
     storage.close();
   });
 
@@ -109,6 +145,7 @@ describe('MCP tool surface', () => {
 
     expect(byName.get('claim_vertex_expansions')?.mutating).toBe(true);
     expect(byName.get('set_vertex_expansion_state')?.mutating).toBe(true);
+    expect(byName.get('requeue_vertex_expansion')?.mutating).toBe(true);
     storage.close();
   });
 });

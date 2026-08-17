@@ -24,6 +24,7 @@ import {
   ListReasoningSessionsInputSchema,
   ProposeInferenceEdgeInputSchema,
   UpdateInferenceEdgeInputSchema,
+  RequeueVertexExpansionInputSchema,
   SetVertexExpansionStateInputSchema,
   ReleaseInferenceEdgeInputSchema,
   AnswerEvidenceQuestionInputSchema,
@@ -77,6 +78,7 @@ const VERTEX_REFERENCE_TOOLS = new Set([
   'get_reasoning_text_for_vertex',
   'claim_vertex_expansions',
   'set_vertex_expansion_state',
+  'requeue_vertex_expansion',
 ]);
 
 const EDGE_REFERENCE_TOOLS = new Set([
@@ -304,6 +306,15 @@ export const buildReasonerTools = (service: ReasonerService): readonly AnyReason
       mutating: true,
       inputSchema: SetVertexExpansionStateInputSchema,
       handler: (input) => service.setVertexExpansionState(input),
+    }),
+    define({
+      name: 'requeue_vertex_expansion',
+      title: 'Requeue vertex expansion',
+      description:
+        'Explicitly returns one Blocked reverse-planning vertex to Pending so it can receive a new expansion lease. A recovery reason and the latest revision are required.',
+      mutating: true,
+      inputSchema: RequeueVertexExpansionInputSchema,
+      handler: (input) => service.requeueVertexExpansion(input),
     }),
     define({
       name: 'claim_inference_edge',

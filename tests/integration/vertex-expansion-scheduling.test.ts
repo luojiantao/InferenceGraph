@@ -331,6 +331,88 @@ describe('vertex expansion scheduling', () => {
     storage.close();
   });
 
+  it('requires explicit requeue before a Blocked vertex can be expanded again', async () => {
+    const clock = new FixedClock();
+    const storage = createStorage({ dataDir: ':memory:', clock, enableAudit: false });
+    const service = new ReasonerService({
+      repository: storage.repository,
+      clock,
+      ids: new SeqIdGenerator(),
+      audit: storage.audit,
+    });
+    const created = unwrap(
+      await service.createReasoningSession({
+        agentId: AGENT_A,
+        goalLabel: 'retry blocked expansion',
+        goalPayload: {},
+        strategy: 'BFS',
+        projectionPolicy: 'DependencySubgraphWithGlobalSummary',
+      }),
+    );
+    const sessionId = created.session.sessionId;
+    const rootVertexId = created.goalVertex.vertexId;
+    const claimed = unwrap(
+      await service.claimVertexExpansions({
+        sessionId,
+        baseGraphRevision: created.session.graphRevision,
+        agentId: AGENT_A,
+        rootVertexId,
+        maxVertices: 1,
+      }),
+    );
+    const leaseId = claimed.claims[0]?.leaseId;
+    if (leaseId === undefined) throw new Error('root claim was unexpectedly empty');
+    const blocked = unwrap(
+      await service.setVertexExpansionState({
+        sessionId,
+        baseGraphRevision: claimed.graphRevision,
+        agentId: AGENT_A,
+        vertexId: rootVertexId,
+        leaseId,
+        state: 'Blocked',
+        reason: 'worker transport failed',
+      }),
+    );
+
+    const skipped = unwrap(
+      await service.claimVertexExpansions({
+        sessionId,
+        baseGraphRevision: blocked.graphRevision,
+        agentId: AGENT_B,
+        rootVertexId,
+        maxVertices: 1,
+      }),
+    );
+    expect(skipped.claims).toEqual([]);
+
+    const requeued = unwrap(
+      await service.requeueVertexExpansion({
+        sessionId,
+        baseGraphRevision: skipped.graphRevision,
+        agentId: AGENT_B,
+        vertexId: rootVertexId,
+        reason: 'provider serializer fixed; retry requested',
+      }),
+    );
+    expect(requeued.expansion).toMatchObject({ state: 'Pending' });
+    expect(requeued.expansion.lease).toBeUndefined();
+
+    const reclaimed = unwrap(
+      await service.claimVertexExpansions({
+        sessionId,
+        baseGraphRevision: requeued.graphRevision,
+        agentId: AGENT_B,
+        rootVertexId,
+        maxVertices: 1,
+      }),
+    );
+    expect(reclaimed.claims[0]).toMatchObject({
+      vertex: { vertexId: rootVertexId },
+      expansion: { state: 'Expanding' },
+    });
+    storage.close();
+  });
+
   it('backfills lifecycle rows for vertices stored before this scheduler existed', async () => {
     const clock = new FixedClock();
     const storage = createStorage({ dataDir: ':memory:', clock, enableAudit: false });
